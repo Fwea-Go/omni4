@@ -10,6 +10,9 @@ route = { pattern = "omnibackend2.fweago-flavaz.workers.dev/*", zone_name = "fwe
 FRONTEND_URL = "https://fwea-i.com"
 WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev"
 
+RUNPOD_API_URL = "https://api.runpod.ai/v2/your-worker/run"
+RUNPOD_API_KEY = "${RUNPOD_API_KEY}"
+
 [assets]
 directory = "./public"
 
@@ -89,8 +92,3 @@ crons = ["0 0 * * *"]
 binding = "TRANSCODER"
 service = "audio-transcoder-service"
 environment = "production"
-
-[unsafe]
-bindings = [
-  { name = "EXTERNAL_API", type = "fetcher", object = "https://external-api.example.com" }
-]

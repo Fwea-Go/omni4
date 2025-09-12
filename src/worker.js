@@ -115,10 +115,27 @@ export class ProcessingStateV2 {
 const PROF_CACHE = new Map();
 
 async function getProfanityTrieFor(lang, env) {
-    const key = `lists/${lang}.json`;
-    if (PROF_CACHE.has(key)) return PROF_CACHE.get(key);
+    const primaryKey = `lists/${lang}.json`;
+    const altKeys = [lang, `${lang}.json`, `lists/${lang}`];
 
-    let words = await env.PROFANITY_LISTS?.get(key, { type: 'json' });
+    // Return cached by language (not by exact key) if present
+    if (PROF_CACHE.has(lang)) return PROF_CACHE.get(lang);
+
+    let words = await env.PROFANITY_LISTS?.get(primaryKey, { type: 'json' });
+
+    // Fallback to alternate key shapes if needed
+    if (!Array.isArray(words)) {
+        for (const k of altKeys) {
+            let v = await env.PROFANITY_LISTS?.get(k);
+            if (v) {
+                try {
+                    const parsed = typeof v === 'string' ? JSON.parse(v) : v;
+                    if (Array.isArray(parsed)) { words = parsed; break; }
+                } catch { /* ignore parse errors */ }
+            }
+        }
+    }
+
     if (!Array.isArray(words)) words = [];
 
     // Optional additional words (kept from your version)

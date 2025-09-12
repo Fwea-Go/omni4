@@ -389,6 +389,10 @@ export default {
                     return await handleTrackEvent(request, env, corsHeaders);
                 case '/status':
                     return await handleStatusQuery(request, env, corsHeaders);
+                case '/encoder-callback':
+                    return await handleEncoderCallback(request, env, corsHeaders);
+                case '/enqueue-encode':
+                    return await handleManualEnqueue(request, env, corsHeaders);
                 case '/health':
                     return await handleHealthCheck(request, env, corsHeaders);
                 case '/debug-env':
@@ -797,7 +801,14 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
   const srcExt = extMap[mimeType] || 'mp3';
   const hasProfanity = Array.isArray(profanityTimestamps) && profanityTimestamps.length > 0;
 
-  // --- Preview: always serve a short WAV preview for maximum compatibility ---
+  // 1) Upload original to R2 (so the encoder can fetch a signed URL)
+  const originalKey = `uploads/${processId}.${srcExt}`;
+  await env.AUDIO_STORAGE.put(originalKey, audioBuffer, {
+    httpMetadata: { contentType: mimeType || 'audio/mpeg', cacheControl: 'private, max-age=7200' },
+    customMetadata: { fingerprint, plan: planType, uploadedAt: new Date().toISOString() }
+  });
+
+  // 2) Generate preview (client gets this immediately)
   const previewKey = `previews/${processId}_preview.wav`;
   const previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, 'audio/wav');
   await env.AUDIO_STORAGE.put(previewKey, previewAudio, {
@@ -807,51 +818,59 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
       fingerprint,
       previewMs: String(previewDuration * 1000),
       profanityCount: String(profanityTimestamps.length || 0),
-      profanity: String(profanityTimestamps.length || 0),
       createdAt: new Date().toISOString()
     }
   });
   const { exp: pExp, sig: pSig } = await signR2Key(previewKey, env, 30 * 60);
   const previewUrl = pSig ? `${base}/audio/${encodeURIComponent(previewKey)}?exp=${pExp}&sig=${pSig}` : `${base}/audio/${encodeURIComponent(previewKey)}`;
 
-  // --- Full: for paid plans ---
+  // 3) Full output path (encoder will write here)
+  const fullKey = `full/${processId}_full.wav`;
+
+  // If no profanity, we can just copy original to full (no encoder needed)
   let fullAudioUrl = null;
-  if (planType !== 'free') {
-    if (hasProfanity) {
-      // Store a cleaned WAV version
-      const fullKey = `full/${processId}_full.wav`;
-      const fullAudio = await createCleanAudio(audioBuffer, profanityTimestamps, 'audio/wav');
-      await env.AUDIO_STORAGE.put(fullKey, fullAudio, {
-        httpMetadata: { contentType: 'audio/wav', cacheControl: 'private, max-age=7200' },
-        customMetadata: {
-          plan: planType,
-          fingerprint,
-          profanityRemoved: String(profanityTimestamps.length),
-          profanity: String(profanityTimestamps.length),
-          processedAt: new Date().toISOString()
-        }
-      });
-      const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
-      fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
-    } else {
-      // No profanity: store original buffer unchanged
-      const fullKey = `full/${processId}_full.${srcExt}`;
-      await env.AUDIO_STORAGE.put(fullKey, audioBuffer, {
-        httpMetadata: { contentType: mimeType || 'audio/mpeg', cacheControl: 'private, max-age=7200' },
-        customMetadata: {
-          plan: planType,
-          fingerprint,
-          profanityRemoved: '0',
-          profanity: '0',
-          processedAt: new Date().toISOString()
-        }
-      });
-      const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
-      fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
-    }
+  if (!hasProfanity) {
+    await env.AUDIO_STORAGE.put(fullKey, audioBuffer, {
+      httpMetadata: { contentType: mimeType || 'audio/mpeg', cacheControl: 'private, max-age=7200' },
+      customMetadata: {
+        plan: planType, fingerprint, profanityRemoved: '0', processedAt: new Date().toISOString()
+      }
+    });
+    const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
+    fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
+    return { previewUrl, fullAudioUrl, processedDuration: estimateAudioDuration(audioBuffer), watermarkId: generateWatermarkId(fingerprint), pendingFull: false };
   }
 
-  return { previewUrl, fullAudioUrl, processedDuration: estimateAudioDuration(audioBuffer), watermarkId: generateWatermarkId(fingerprint) };
+  // 4) Profanity present → enqueue server-side encoding job (or throw if not configured)
+  try {
+    await updateProgress(env, fingerprint, processId, 'encode-queued', 75, { state: 'queued', fullKey, originalKey });
+    await enqueueExternalEncodeJob(env, {
+      inputKey: originalKey,
+      outputKey: fullKey,
+      profanityTimestamps,
+      format: 'wav',
+      processId,
+      fingerprint,
+      request
+    });
+    await updateProgress(env, fingerprint, processId, 'encode-started', 80, { state: 'encoding', fullKey });
+  } catch (e) {
+    // If encoder not available, fall back to local muted WAV so user still gets a "clean" file
+    const fallback = await createCleanAudio(audioBuffer, profanityTimestamps, 'audio/wav');
+    await env.AUDIO_STORAGE.put(fullKey, fallback, {
+      httpMetadata: { contentType: 'audio/wav', cacheControl: 'private, max-age=7200' },
+      customMetadata: { plan: planType, fingerprint, profanityRemoved: String(profanityTimestamps.length), processedAt: new Date().toISOString(), fallback: 'true' }
+    });
+    const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
+    fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
+    await updateProgress(env, fingerprint, processId, 'encode-fallback', 95, { state: 'done', fullKey, fallback: true });
+    return { previewUrl, fullAudioUrl, processedDuration: estimateAudioDuration(audioBuffer), watermarkId: generateWatermarkId(fingerprint), pendingFull: false };
+  }
+
+  // 5) We return immediately; frontend should poll /status to know when full is ready.
+  const { exp: tmpExp, sig: tmpSig } = await signR2Key(fullKey, env, 10 * 60);
+  const prospective = tmpSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${tmpExp}&sig=${tmpSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
+  return { previewUrl, fullAudioUrl: prospective, processedDuration: estimateAudioDuration(audioBuffer), watermarkId: generateWatermarkId(fingerprint), pendingFull: true };
 }
 
 
@@ -1409,5 +1428,109 @@ async function handleStatusQuery(request, env, corsHeaders){
   const processId = url.searchParams.get('id') || url.searchParams.get('processId') || '';
   const fingerprint = url.searchParams.get('fp') || 'anonymous';
   const txt = await readProgress(env, fingerprint, processId);
-  return new Response(txt || 'null', {status:200, headers: {...corsHeaders, 'Content-Type':'application/json'}});
+  let payload = null;
+  try { payload = txt ? JSON.parse(txt) : null; } catch { payload = null; }
+
+  // If the encoder reported an output key, attach a signed URL so the UI can swap the link
+  if (payload && payload.fullAudioKey) {
+    const base = getWorkerBase(env, request);
+    const { exp, sig } = await signR2Key(payload.fullAudioKey, env, 60 * 60);
+    payload.fullAudioUrl = sig ? `${base}/audio/${encodeURIComponent(payload.fullAudioKey)}?exp=${exp}&sig=${sig}` : `${base}/audio/${encodeURIComponent(payload.fullAudioKey)}`;
+  }
+
+  return new Response(JSON.stringify(payload), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// --------- Encoder integration (external microservice or queue consumer) ----------
+// We support two modes:
+//  1) Direct HTTP microservice at ENCODER_URL (recommended low-cost VM)
+//  2) Cloudflare Queues relay (TRANScode queue) that your consumer Worker will drain
+
+async function enqueueExternalEncodeJob(env, {
+  inputKey, outputKey, profanityTimestamps, format = 'wav', processId, fingerprint, request
+}) {
+  const base = getWorkerBase(env, request);
+  const inputSig = await signR2Key(inputKey, env, 60 * 60); // 1h
+  const outputSig = await signR2Key(outputKey, env, 60 * 60);
+
+  const payload = {
+    input: {
+      key: inputKey,
+      url: `${base}/audio/${encodeURIComponent(inputKey)}?exp=${inputSig.exp}&sig=${inputSig.sig}`
+    },
+    output: {
+      key: outputKey,
+      // The encoder writes to R2 via S3 API using env vars you give it; this key tells it where.
+      // If your encoder prefers to POST back bytes, it can POST to /encoder-callback with dataUrl instead.
+    },
+    format,
+    profanityTimestamps,
+    processId,
+    fingerprint,
+    callback: `${base}/encoder-callback?pid=${encodeURIComponent(processId)}&fp=${encodeURIComponent(fingerprint)}`
+  };
+
+  if (env.ENCODER_URL) {
+    const url = `${String(env.ENCODER_URL).replace(/\/+$/,'')}/jobs/clean`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(env.ENCODER_TOKEN ? { 'Authorization': `Bearer ${env.ENCODER_TOKEN}` } : {}) },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      throw new Error(`Encoder enqueue failed: ${resp.status}`);
+    }
+    return true;
+  }
+
+  // Optional: relay via Queues if configured
+  if (env.TRANS CODE_QUEUE) {
+    await env.TRANS CODE_QUEUE.send(payload);
+    return true;
+  }
+
+  throw new Error('No ENCODER_URL or TRANS CODE_QUEUE configured');
+}
+
+async function handleEncoderCallback(request, env, corsHeaders) {
+  try {
+    const url = new URL(request.url);
+    const pid = url.searchParams.get('pid') || '';
+    const fp = url.searchParams.get('fp') || 'anonymous';
+    const body = await request.json().catch(() => ({}));
+
+    // body may contain: { ok, outputKey, error }
+    const record = {
+      step: 'encode-finished',
+      percent: body?.ok ? 100 : 90,
+      state: body?.ok ? 'done' : 'error',
+      fullAudioKey: body?.outputKey || null,
+      error: body?.error || null,
+      ts: Date.now()
+    };
+
+    // Persist to ProcessingStateV2
+    if (env.PROCESSING_STATE) {
+      const id = env.PROCESSING_STATE.idFromName(fp);
+      const stub = env.PROCESSING_STATE.get(id);
+      await stub.fetch('https://state/progress', {
+        method: 'PUT',
+        body: JSON.stringify({ key: pid, value: record })
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+}
+
+// Useful for admin testing without running a full flow
+async function handleManualEnqueue(request, env, corsHeaders) {
+  if (!isAdminRequest(request, env)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  const { inputKey, outputKey, profanityTimestamps = [], format = 'wav', processId = generateProcessId(), fingerprint = 'admin' } = await request.json();
+  await enqueueExternalEncodeJob(env, { inputKey, outputKey, profanityTimestamps, format, processId, fingerprint, request });
+  return new Response(JSON.stringify({ ok: true, enqueued: { inputKey, outputKey, processId } }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }

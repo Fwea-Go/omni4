@@ -10,7 +10,7 @@ route = { pattern = "omnibackend2.fweago-flavaz.workers.dev/*", zone_name = "fwe
 FRONTEND_URL = "https://fwea-i.com"
 WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev"
 
-RUNPOD_API_URL = "https://api.runpod.ai/v2/your-worker/run"
+RUNPOD_API_URL = "https://rvxah7xwk0ql9p-8000.proxy.runpod.net/"
 RUNPOD_API_KEY = "${RUNPOD_API_KEY}"
 
 [assets]
@@ -88,7 +88,10 @@ send_metrics = true
 [triggers]
 crons = ["0 0 * * *"]
 
-[[services]]
-binding = "TRANSCODER"
-service = "audio-transcoder-service"
-environment = "production"
+# NOTE: TRANSCODER service binding removed to avoid deploy failure
+# (code 10141: target script/environment not found). If/when you deploy a
+# separate Worker for transcoding, re-add:
+# [[services]]
+# binding = "TRANSCODER"
+# service = "audio-transcoder-service"   # <-- exact Worker name
+# environment = "production"              # <-- environment that actually exists

@@ -1,4 +1,4 @@
-// FWEA-I Backend — Enhanced Cloudflare Worker with RunPod Integration
+// FWEA-I Backend — Enhanced Cloudflare Worker (RunPod removed)
 
 // --- Stripe helpers (Workers/Edge compatible; no Node SDK) ---
 function formAppend(params, key, value) {
@@ -398,7 +398,6 @@ async function handleHealthCheck(request, env, corsHeaders) {
             db: Boolean(env.DB),
             kv: Boolean(env.PROFANITY_LISTS),
             stripe: Boolean(env.STRIPE_SECRET_KEY),
-            runpod: Boolean(env.RUNPOD_API_KEY),
         },
         configuration: {
             frontendUrl: Boolean(env.FRONTEND_URL),
@@ -616,117 +615,40 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
     }
 }
 
-// ---------- Enhanced Transcription with RunPod Fallback ----------
+// ---------- Enhanced Transcription (Cloudflare AI first, then external; no RunPod) ----------
 async function transcribeAudioEnhanced(audioBuffer, env) {
-    // Try multiple transcription sources in order of preference
-    const transcriptionSources = [
-        () => transcribeWithRunPod(audioBuffer, env),
-        () => transcribeWithCloudflareAI(audioBuffer, env),
-        () => transcribeWithExternalService(audioBuffer, env),
-    ];
-
-    for (const transcribeMethod of transcriptionSources) {
-        try {
-            const result = await transcribeMethod();
-            if (result && result.text) {
-                return result;
-            }
-        } catch (error) {
-            console.warn('Transcription method failed:', error.message);
-            continue;
-        }
-    }
-
-    // Fallback: return empty transcription
-    return { text: '', segments: [] };
-}
-
-// RunPod transcription // RunPod transcription integration
-async function transcribeWithRunPod(audioBuffer, env) {
-  const apiUrl = (env.RUNPOD_API_URL || '').trim();
-  const apiKey = (env.RUNPOD_API_KEY || '').trim();
-  if (!apiUrl || !apiKey) throw new Error('RunPod not configured');
-
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      input: {
-        audio_base64: b64,
-        model: 'large-v3',
-        transcription: 'segments',
-        language: 'auto',
-        return_timestamps: true
+  // Prefer Cloudflare Workers AI Whisper
+  try {
+    if (env.AI) {
+      const maxSize = 25 * 1024 * 1024; // Workers AI input cap
+      const buf = audioBuffer.byteLength > maxSize ? audioBuffer.slice(0, maxSize) : audioBuffer;
+      const response = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
+      if (response && (response.text || response.segments)) {
+        return { text: response.text || '', segments: response.segments || [] };
       }
-    })
-  });
-
-  if (!response.ok) throw new Error(`RunPod API error: ${response.status}`);
-  const data = await response.json();
-  const output = data.output || data;
-  return {
-    text: output.transcription || output.text || '',
-    segments: Array.isArray(output.segments) ? output.segments : []
-  };
-}
-
-// Cloudflare AI transcription
-async function transcribeWithCloudflareAI(audioBuffer, env) {
-    if (!env.AI) {
-        throw new Error('Cloudflare AI not available');
     }
+  } catch (e) {
+    console.warn('Workers AI transcription failed:', e?.message || e);
+  }
 
-    const maxSize = 25 * 1024 * 1024; // 25MB limit for Cloudflare AI
-    const processBuffer = audioBuffer.byteLength > maxSize ? 
-        audioBuffer.slice(0, maxSize) : audioBuffer;
-
-    const response = await env.AI.run('@cf/openai/whisper', {
-        audio: [...new Uint8Array(processBuffer)]
-    });
-
-    return {
-        text: response.text || '',
-        segments: response.segments || []
-    };
-}
-
-// External transcription service
-async function transcribeWithExternalService(audioBuffer, env) {
-    if (!env.TRANSCRIBE_ENDPOINT) {
-        throw new Error('External transcriber not configured');
+  // Fallback: external endpoint if configured
+  try {
+    if (env.TRANSCRIBE_ENDPOINT) {
+      const form = new FormData();
+      form.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'audio.mp3');
+      const headers = {};
+      if (env.TRANSCRIBE_TOKEN) headers['X-API-Token'] = String(env.TRANSCRIBE_TOKEN);
+      const resp = await fetch(`${String(env.TRANSCRIBE_ENDPOINT).replace(/\/+$/, '')}/transcribe`, { method: 'POST', body: form, headers });
+      if (!resp.ok) throw new Error(`External transcriber error: ${resp.status}`);
+      const data = await resp.json();
+      return { text: data.text || data.transcription || '', segments: data.segments || [] };
     }
+  } catch (e) {
+    console.warn('External transcription failed:', e?.message || e);
+  }
 
-    const maxSize = 10 * 1024 * 1024; // 10MB for external services
-    const processBuffer = audioBuffer.byteLength > maxSize ? 
-        audioBuffer.slice(0, maxSize) : audioBuffer;
-
-    const formData = new FormData();
-    formData.append('audio', new Blob([processBuffer], { type: 'audio/mpeg' }), 'audio.mp3');
-
-    const headers = {};
-    if (env.TRANSCRIBE_TOKEN) {
-        headers['X-API-Token'] = env.TRANSCRIBE_TOKEN;
-    }
-
-    const response = await fetch(`${env.TRANSCRIBE_ENDPOINT}/transcribe`, {
-        method: 'POST',
-        body: formData,
-        headers
-    });
-
-    if (!response.ok) {
-        throw new Error(`External transcriber error: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return {
-        text: result.text || result.transcription || '',
-        segments: result.segments || []
-    };
+  // Final fallback
+  return { text: '', segments: [] };
 }
 
 // ---------- Enhanced Language Detection ----------
@@ -805,162 +727,90 @@ async function findProfanityTimestampsEnhanced(transcription, languages, env) {
     return timestamps;
 }
 
-// ---------- Enhanced Audio Output Generation ----------
+// ---------- Enhanced Audio Output Generation (No RunPod, WAV for cleaned outputs) ----------
 async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, planType, previewDuration, fingerprint, env, mimeType, originalName, request) {
-    const base = getWorkerBase(env, request);
-    const processId = generateProcessId();
-    
-    // Determine file extension
-    const extMap = {
-        'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
-        'audio/wav': 'wav', 'audio/x-wav': 'wav',
-        'audio/flac': 'flac', 'audio/ogg': 'ogg',
-        'audio/mp4': 'm4a', 'audio/aac': 'aac'
-    };
-    
-    const extension = extMap[mimeType] || 'mp3';
-    const safeMime = mimeType || 'audio/mpeg';
+  const base = getWorkerBase(env, request);
+  const processId = generateProcessId();
 
-    try {
-        // Generate preview (always available)
-        const previewKey = `previews/${processId}_preview.${extension}`;
-        const previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, safeMime);
-        
-        await env.AUDIO_STORAGE.put(previewKey, previewAudio, {
-            httpMetadata: { 
-                contentType: safeMime,
-                cacheControl: 'public, max-age=3600'
-            },
-            customMetadata: {
-                plan: planType,
-                fingerprint,
-                previewMs: String(previewDuration * 1000),
-                profanityCount: String(profanityTimestamps.length),
-                profanity: String(profanityTimestamps.length),
-                createdAt: new Date().toISOString()
-            }
-        });
+  // Determine source extension (for cases with no profanity)
+  const extMap = {
+    'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
+    'audio/wav': 'wav', 'audio/x-wav': 'wav',
+    'audio/flac': 'flac', 'audio/ogg': 'ogg',
+    'audio/mp4': 'm4a', 'audio/aac': 'aac'
+  };
+  const srcExt = extMap[mimeType] || 'mp3';
+  const hasProfanity = Array.isArray(profanityTimestamps) && profanityTimestamps.length > 0;
 
-        const { exp: pExp, sig: pSig } = await signR2Key(previewKey, env, 30 * 60);
-        const previewUrl = pSig ? 
-            `${base}/audio/${encodeURIComponent(previewKey)}?exp=${pExp}&sig=${pSig}` :
-            `${base}/audio/${encodeURIComponent(previewKey)}`;
-
-        let fullAudioUrl = null;
-
-        // Generate full version for paid plans
-        if (planType !== 'free') {
-            const fullKey = `full/${processId}_full.${extension}`;
-            
-            // Use RunPod for advanced processing if available
-            if (env.RUNPOD_API_KEY && profanityTimestamps.length > 0) {
-                try {
-                    fullAudioUrl = await processAudioWithRunPod(audioBuffer, profanityTimestamps, fullKey, env, safeMime, request);
-                } catch (error) {
-                    console.warn('RunPod processing failed, using local processing:', error.message);
-                    // Fallback to local processing
-                }
-            }
-            
-            // Local processing fallback
-            if (!fullAudioUrl) {
-                const fullAudio = await createCleanAudio(audioBuffer, profanityTimestamps, safeMime);
-                
-                await env.AUDIO_STORAGE.put(fullKey, fullAudio, {
-                    httpMetadata: {
-                        contentType: safeMime,
-                        cacheControl: 'private, max-age=7200'
-                    },
-                    customMetadata: {
-                        plan: planType,
-                        fingerprint,
-                        profanityRemoved: String(profanityTimestamps.length),
-                        profanity: String(profanityTimestamps.length),
-                        processedAt: new Date().toISOString()
-                    }
-                });
-
-                const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
-                fullAudioUrl = fSig ? 
-                    `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` :
-                    `${base}/audio/${encodeURIComponent(fullKey)}`;
-            }
-        }
-
-        return {
-            previewUrl,
-            fullAudioUrl,
-            processedDuration: estimateAudioDuration(audioBuffer),
-            watermarkId: generateWatermarkId(fingerprint)
-        };
-
-    } catch (error) {
-        console.error('Audio output generation failed:', error);
-        throw new Error(`Failed to generate audio outputs: ${error.message}`);
+  // --- Preview: always serve a short WAV preview for maximum compatibility ---
+  const previewKey = `previews/${processId}_preview.wav`;
+  const previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, 'audio/wav');
+  await env.AUDIO_STORAGE.put(previewKey, previewAudio, {
+    httpMetadata: { contentType: 'audio/wav', cacheControl: 'public, max-age=3600' },
+    customMetadata: {
+      plan: planType,
+      fingerprint,
+      previewMs: String(previewDuration * 1000),
+      profanityCount: String(profanityTimestamps.length || 0),
+      profanity: String(profanityTimestamps.length || 0),
+      createdAt: new Date().toISOString()
     }
-}
-
-// ---------- RunPod Audio Processing ----------
-async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKey, env, mimeType, request) {
-      const apiUrl = (env.RUNPOD_API_URL || '').trim();
-  const apiKey = (env.RUNPOD_API_KEY || '').trim();
-  if (!apiUrl || !apiKey) throw new Error('RunPod audio processing not configured');
-
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      input: {
-        audio_base64: b64,
-        profanity_timestamps: profanityTimestamps,
-        output_format: mimeType,
-        processing_mode: 'advanced_clean',
-        quality: 'high'
-      }
-    })
   });
+  const { exp: pExp, sig: pSig } = await signR2Key(previewKey, env, 30 * 60);
+  const previewUrl = pSig ? `${base}/audio/${encodeURIComponent(previewKey)}?exp=${pExp}&sig=${pSig}` : `${base}/audio/${encodeURIComponent(previewKey)}`;
 
-  if (!response.ok) throw new Error(`RunPod audio processing failed: ${response.status}`);
-  const result = await response.json();
-  const out = result.output || {};
-
-  if (out.processed_audio_base64) {
-    const processedBuffer = Uint8Array.from(atob(out.processed_audio_base64), c => c.charCodeAt(0));
-    await env.AUDIO_STORAGE.put(outputKey, processedBuffer, {
-      httpMetadata: { contentType: mimeType, cacheControl: 'private, max-age=7200' },
-      customMetadata: {
-        processedBy: 'runpod',
-        profanityRemoved: String(profanityTimestamps.length),
-        profanity: String(profanityTimestamps.length),
-        processedAt: new Date().toISOString()
-      }
-    });
-    const { exp, sig } = await signR2Key(outputKey, env, 60 * 60);
-    const base = getWorkerBase(env, request);
-    return sig
-      ? `${base}/audio/${encodeURIComponent(outputKey)}?exp=${exp}&sig=${sig}`
-      : `${base}/audio/${encodeURIComponent(outputKey)}`;
+  // --- Full: for paid plans ---
+  let fullAudioUrl = null;
+  if (planType !== 'free') {
+    if (hasProfanity) {
+      // Store a cleaned WAV version
+      const fullKey = `full/${processId}_full.wav`;
+      const fullAudio = await createCleanAudio(audioBuffer, profanityTimestamps, 'audio/wav');
+      await env.AUDIO_STORAGE.put(fullKey, fullAudio, {
+        httpMetadata: { contentType: 'audio/wav', cacheControl: 'private, max-age=7200' },
+        customMetadata: {
+          plan: planType,
+          fingerprint,
+          profanityRemoved: String(profanityTimestamps.length),
+          profanity: String(profanityTimestamps.length),
+          processedAt: new Date().toISOString()
+        }
+      });
+      const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
+      fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
+    } else {
+      // No profanity: store original buffer unchanged
+      const fullKey = `full/${processId}_full.${srcExt}`;
+      await env.AUDIO_STORAGE.put(fullKey, audioBuffer, {
+        httpMetadata: { contentType: mimeType || 'audio/mpeg', cacheControl: 'private, max-age=7200' },
+        customMetadata: {
+          plan: planType,
+          fingerprint,
+          profanityRemoved: '0',
+          profanity: '0',
+          processedAt: new Date().toISOString()
+        }
+      });
+      const { exp: fExp, sig: fSig } = await signR2Key(fullKey, env, 60 * 60);
+      fullAudioUrl = fSig ? `${base}/audio/${encodeURIComponent(fullKey)}?exp=${fExp}&sig=${fSig}` : `${base}/audio/${encodeURIComponent(fullKey)}`;
+    }
   }
 
-  throw new Error('RunPod processing incomplete or failed');
+  return { previewUrl, fullAudioUrl, processedDuration: estimateAudioDuration(audioBuffer), watermarkId: generateWatermarkId(fingerprint) };
 }
 
-// ---------- Audio Processing Utilities ----------
-async function createPreviewAudio(audioBuffer, durationSeconds, profanityTimestamps, mimeType) {
-  // Build a preview window [0, durationSeconds]
-  const windowEnd = Math.max(1, Math.floor(durationSeconds));
 
-  // Decode: assume input is compressed; we cannot fully decode MP3 here,
-  // so we produce a deterministic silent/attenuated preview in WAV for the window.
-  // Strategy:
-  //  - Estimate preview bytes based on bitrate as before
-  //  - If there are profanity ranges inside the window, create a WAV of length `durationSeconds`
-  //    and mute only those sub-ranges; else, slice the original buffer for speed.
+// ---------- Audio Processing Utilities ----------
+/**
+ * Build a preview window [0, durationSeconds]. If profanity occurs in-window, synthesize a WAV with muted spans;
+ * otherwise return an initial slice based on estimated duration.
+ */
+async function createPreviewAudio(audioBuffer, durationSeconds, profanityTimestamps, mimeType) {
+  const windowEnd = Math.max(1, Math.floor(durationSeconds));
   const hasProfanityInWindow = (profanityTimestamps || []).some(p => (p.start || 0) < windowEnd);
 
   if (!hasProfanityInWindow) {
-    // Fast path: return the first N seconds slice as before
+    // Fast path: return first N seconds slice as before
     const dur = Math.max(1, estimateAudioDuration(audioBuffer));
     const estimatedBytesPerSecond = audioBuffer.byteLength / dur;
     const previewBytes = Math.min(audioBuffer.byteLength, estimatedBytesPerSecond * windowEnd);
@@ -1236,8 +1086,6 @@ async function handleDebugEnv(request, env, corsHeaders) {
             PROFANITY_LISTS: Boolean(env.PROFANITY_LISTS),
             STRIPE_SECRET_KEY: Boolean(env.STRIPE_SECRET_KEY),
             STRIPE_WEBHOOK_SECRET: Boolean(env.STRIPE_WEBHOOK_SECRET),
-            RUNPOD_API_KEY: Boolean(env.RUNPOD_API_KEY),
-            RUNPOD_API_URL: Boolean(env.RUNPOD_API_URL),
             TRANSCRIBE_ENDPOINT: Boolean(env.TRANSCRIBE_ENDPOINT),
             TRANSCRIBE_TOKEN: Boolean(env.TRANSCRIBE_TOKEN),
             FRONTEND_URL: env.FRONTEND_URL || null,

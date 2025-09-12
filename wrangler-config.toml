@@ -46,11 +46,9 @@ bindings = [
 binding = "TRANSCODE_QUEUE"
 queue = "audio-transcoding-queue"
 
-[[queues.consumers]]
-queue = "audio-transcoding-queue"
-worker = "omnibackend2"
-max_batch_size = 10
-max_batch_timeout = 30
+# Queue consumer temporarily disabled to avoid deploy error 11001 ("Queue handler is missing").
+# We’re processing full outputs inline via RunPod now, so a consumer isn’t required.
+# Re‑enable a consumer later only if you deploy a separate background transcoder Worker with a `queue` handler.
 
 [observability]
 enabled = true

@@ -3,8 +3,7 @@ main = "src/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 usage_model = "unbound"
-workers_dev = false
-route = { pattern = "omnibackend2.fweago-flavaz.workers.dev/*", zone_name = "fweago-flavaz.workers.dev" }
+workers_dev = true
 
 [vars]
 FRONTEND_URL = "https://fwea-i.com"

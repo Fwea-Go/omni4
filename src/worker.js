@@ -1,5 +1,74 @@
 // FWEA-I Backend — Enhanced Cloudflare Worker with RunPod Integration
-import Stripe from 'stripe';
+
+// --- Stripe helpers (Workers/Edge compatible; no Node SDK) ---
+function formAppend(params, key, value) {
+  if (value === undefined || value === null) return;
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => formAppend(params, `${key}[${i}]`, v));
+  } else if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      formAppend(params, `${key}[${k}]`, v);
+    }
+  } else {
+    params.append(key, String(value));
+  }
+}
+
+function stripeParams(obj) {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(obj || {})) formAppend(p, k, v);
+  return p;
+}
+
+async function stripeFetch(path, method, bodyObj, env) {
+  const resp = await fetch(`https://api.stripe.com${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: stripeParams(bodyObj),
+  });
+  const text = await resp.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!resp.ok) {
+    throw new Error(`Stripe ${method} ${path} failed: ${resp.status} ${text}`);
+  }
+  return data;
+}
+
+async function createCheckoutSession({ priceId, isSubscription, email, successUrl, cancelUrl, metadata }, env) {
+  const mode = isSubscription ? 'subscription' : 'payment';
+  const body = {
+    mode,
+    'line_items': [{ price: priceId, quantity: 1 }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: email || undefined,
+  };
+  if (metadata) body.metadata = metadata;
+  return stripeFetch('/v1/checkout/sessions', 'POST', body, env);
+}
+
+// Verify Stripe webhook signature (per https://stripe.com/docs/webhooks/signatures)
+async function verifyStripeSignature(rawBody, sigHeader, secret) {
+  if (!sigHeader || !secret) return false;
+  // header like: "t=1697044090,v1=signature,v0=..."
+  const parts = Object.fromEntries(sigHeader.split(',').map(kv => kv.split('=')));
+  const t = parts.t;
+  const v1 = parts.v1;
+  if (!t || !v1) return false;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`${t}.${rawBody}`);
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sigBuf = await crypto.subtle.sign('HMAC', key, data);
+  const hex = [...new Uint8Array(sigBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  // Constant-time compare
+  if (hex.length !== v1.length) return false;
+  let out = 0; for (let i = 0; i < hex.length; i++) out |= hex.charCodeAt(i) ^ v1.charCodeAt(i);
+  return out === 0;
+}
 
 // --- Durable Object: ProcessingStateV2 ---
 export class ProcessingStateV2 {
@@ -1072,17 +1141,115 @@ async function handleDebugEnv(request, env, corsHeaders) {
 
 // Placeholder implementations for other handlers
 async function handlePaymentCreation(request, env, corsHeaders) {
-    // Implementation remains the same as in original file
-    return new Response(JSON.stringify({ message: 'Payment creation endpoint' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  if (request.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+  }
+
+  try {
+    const { priceId, type, fileName, email, fingerprint } = await request.json();
+
+    if (!env.STRIPE_SECRET_KEY) {
+      return new Response(JSON.stringify({ error: 'Missing STRIPE_SECRET_KEY' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+    if (!env.FRONTEND_URL) {
+      return new Response(JSON.stringify({ error: 'Missing FRONTEND_URL' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    const validPriceIds = Object.values(STRIPE_PRICE_IDS);
+    if (!validPriceIds.includes(priceId)) {
+      return new Response(JSON.stringify({ error: 'Invalid price ID' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (!['single_track', 'day_pass', 'dj_pro', 'studio_elite'].includes(type)) {
+      return new Response(JSON.stringify({ error: 'Invalid plan type' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (PRICE_BY_TYPE[type] !== priceId) {
+      return new Response(JSON.stringify({ error: 'Price/type mismatch' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    const isSubscription = (type === 'dj_pro' || type === 'studio_elite');
+
+    const session = await createCheckoutSession({
+      priceId,
+      isSubscription,
+      email,
+      successUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/cancel`,
+      metadata: {
+        type: type || '',
+        fileName: fileName || '',
+        fingerprint: fingerprint || 'unknown',
+        processingType: 'audio_cleaning',
+        ts: String(Date.now()),
+      }
+    }, env);
+
+    await storePaymentIntent(session.id, type, priceId, fingerprint, env);
+
+    return new Response(JSON.stringify({ success: true, sessionId: session.id, url: session.url }), {
+      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
+  } catch (error) {
+    console.error('Payment creation error:', error?.message);
+    return new Response(JSON.stringify({ error: 'Payment creation failed', details: error?.message || 'unknown' }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
 }
 
 async function handleStripeWebhook(request, env, corsHeaders) {
-    // Implementation remains the same as in original file
-    return new Response(JSON.stringify({ message: 'Webhook endpoint' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  if (request.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+  }
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    return new Response(JSON.stringify({ error: 'Missing STRIPE_WEBHOOK_SECRET' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const sig = request.headers.get('stripe-signature');
+  const raw = await request.text();
+  try {
+    const ok = await verifyStripeSignature(raw, sig, env.STRIPE_WEBHOOK_SECRET);
+    if (!ok) {
+      return new Response(JSON.stringify({ error: 'Invalid signature' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const event = JSON.parse(raw);
+
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await handlePaymentSuccess(event.data.object, env);
+        break;
+      case 'invoice.payment_succeeded':
+        await handleSubscriptionRenewal(event.data.object, env);
+        break;
+      case 'customer.subscription.deleted':
+        await handleSubscriptionCancelled(event.data.object, env);
+        break;
+      case 'customer.subscription.updated':
+        await handleSubscriptionUpdated(event.data.object, env);
+        break;
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
+    }
+
+    return new Response('OK', { status: 200, headers: corsHeaders });
+  } catch (error) {
+    console.error('Webhook error:', error?.message);
+    return new Response(JSON.stringify({ error: 'Webhook processing failed' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
+  }
 }
 
 async function handleAccessActivation(request, env, corsHeaders) {

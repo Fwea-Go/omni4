@@ -928,34 +928,134 @@ async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKe
 
 // ---------- Audio Processing Utilities ----------
 async function createPreviewAudio(audioBuffer, durationSeconds, profanityTimestamps, mimeType) {
-    // For preview, we create a safe version by either:
-    // 1. Using the beginning of the file if no profanity detected in first 30s
-    // 2. Creating a safe segment or silent audio if profanity detected early
+  // Build a preview window [0, durationSeconds]
+  const windowEnd = Math.max(1, Math.floor(durationSeconds));
 
-    const hasEarlyProfanity = profanityTimestamps.some(p => p.start < durationSeconds);
-    
-    if (hasEarlyProfanity) {
-        // Generate clean preview or silent audio
-        return generateSilentAudio(durationSeconds);
-    }
+  // Decode: assume input is compressed; we cannot fully decode MP3 here,
+  // so we produce a deterministic silent/attenuated preview in WAV for the window.
+  // Strategy:
+  //  - Estimate preview bytes based on bitrate as before
+  //  - If there are profanity ranges inside the window, create a WAV of length `durationSeconds`
+  //    and mute only those sub-ranges; else, slice the original buffer for speed.
+  const hasProfanityInWindow = (profanityTimestamps || []).some(p => (p.start || 0) < windowEnd);
 
-    // Simple preview: take first N seconds
+  if (!hasProfanityInWindow) {
+    // Fast path: return the first N seconds slice as before
     const dur = Math.max(1, estimateAudioDuration(audioBuffer));
     const estimatedBytesPerSecond = audioBuffer.byteLength / dur;
-    const previewBytes = Math.min(audioBuffer.byteLength, estimatedBytesPerSecond * durationSeconds);
-    
+    const previewBytes = Math.min(audioBuffer.byteLength, estimatedBytesPerSecond * windowEnd);
     return audioBuffer.slice(0, previewBytes);
+  }
+
+  // Generate a WAV with silence by default, then we only "unmute" the safe ranges
+  // Implementation: start with full silence, then fill safe subranges with low-amplitude tone.
+  // (We cannot realistically reconstruct the original here in Worker without a decoder, so
+  // the safe and predictable approach is a "bleeped" style preview.)
+  const sampleRate = 44100;
+  const numSamples = sampleRate * windowEnd;
+  const bytesPerSample = 2; // 16-bit PCM
+  const headerSize = 44;
+  const buffer = new ArrayBuffer(headerSize + numSamples * bytesPerSample);
+  const view = new DataView(buffer);
+
+  // WAV header
+  const writeString = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * bytesPerSample, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);   // PCM
+  view.setUint16(22, 1, true);   // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, numSamples * bytesPerSample, true);
+
+  // Start fully silent
+  // To make the preview less jarring, fill non-profanity ranges with a very low-amplitude tone (bleep)
+  const amp = 800; // low amplitude "bleep"
+  const freq = 1000; // 1kHz
+  const twoPiOverSR = (2 * Math.PI * freq) / sampleRate;
+
+  // Build a boolean mask of muted samples
+  const muted = new Uint8Array(numSamples);
+  for (const p of profanityTimestamps || []) {
+    const start = Math.max(0, Math.floor((p.start || 0) * sampleRate));
+    const end = Math.min(numSamples, Math.floor((p.end || (p.start + 0.5)) * sampleRate));
+    for (let i = start; i < end; i++) muted[i] = 1;
+  }
+
+  // Write samples
+  let t = 0;
+  for (let i = 0; i < numSamples; i++) {
+    const offset = headerSize + i * bytesPerSample;
+    if (muted[i]) {
+      // keep silent for profanity ranges
+      view.setInt16(offset, 0, true);
+    } else {
+      // quiet tone (acts as an audible watermark/bleep)
+      const s = Math.sin(t) * amp;
+      view.setInt16(offset, s | 0, true);
+    }
+    t += twoPiOverSR;
+  }
+
+  return buffer;
 }
 
 async function createCleanAudio(audioBuffer, profanityTimestamps, mimeType) {
-    if (profanityTimestamps.length === 0) {
-        return audioBuffer; // No cleaning needed
-    }
+  // If no profanity ranges, return original buffer as-is
+  if (!profanityTimestamps || profanityTimestamps.length === 0) return audioBuffer;
 
-    // For now, return the original buffer
-    // In production, this would implement actual audio editing
-    // This could integrate with FFmpeg WASM or other audio processing libraries
-    return audioBuffer;
+  // Produce a muted WAV for full length based on our rough duration estimate.
+  // This is a conservative "clean" output until a proper decoder/encoder (e.g., FFmpeg) is wired.
+  const duration = Math.max(1, estimateAudioDuration(audioBuffer));
+  return generateMutedWav(duration, profanityTimestamps);
+}
+
+function generateMutedWav(durationSeconds, profanityTimestamps) {
+  const sampleRate = 44100;
+  const bytesPerSample = 2;
+  const numSamples = durationSeconds * sampleRate;
+  const headerSize = 44;
+  const buffer = new ArrayBuffer(headerSize + numSamples * bytesPerSample);
+  const view = new DataView(buffer);
+
+  const writeString = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * bytesPerSample, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, numSamples * bytesPerSample, true);
+
+  const muted = new Uint8Array(numSamples);
+  for (const p of profanityTimestamps || []) {
+    const start = Math.max(0, Math.floor((p.start || 0) * sampleRate));
+    const end = Math.min(numSamples, Math.floor((p.end || (p.start + 0.5)) * sampleRate));
+    for (let i = start; i < end; i++) muted[i] = 1;
+  }
+
+  // Fill with low-amplitude "bleep" outside muted windows, silence inside
+  const amp = 800, freq = 1000, twoPiOverSR = (2 * Math.PI * freq) / sampleRate;
+  let t = 0;
+  for (let i = 0; i < numSamples; i++) {
+    const offset = headerSize + i * bytesPerSample;
+    const s = muted[i] ? 0 : Math.sin(t) * amp;
+    view.setInt16(offset, s | 0, true);
+    t += twoPiOverSR;
+  }
+  return buffer;
 }
 
 function generateSilentAudio(durationSeconds, sampleRate = 44100) {

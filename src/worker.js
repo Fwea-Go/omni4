@@ -1,4 +1,21 @@
-// FWEA-I Backend — Enhanced Cloudflare Worker (RunPod removed)
+
+// --- Price map (read from env so you don't hardcode IDs) ---
+const STRIPE_PRICE_IDS = {
+  single_track: (typeof STRIPE_SINGLE_PRICE_ID !== 'undefined' ? STRIPE_SINGLE_PRICE_ID : undefined),
+  day_pass: (typeof STRIPE_DAY_PASS_PRICE_ID !== 'undefined' ? STRIPE_DAY_PASS_PRICE_ID : undefined),
+  dj_pro: (typeof STRIPE_DJ_PRO_PRICE_ID !== 'undefined' ? STRIPE_DJ_PRO_PRICE_ID : undefined),
+  studio_elite: (typeof STRIPE_STUDIO_ELITE_PRICE_ID !== 'undefined' ? STRIPE_STUDIO_ELITE_PRICE_ID : undefined)
+};
+// derive at runtime using env (set in handlePaymentCreation)
+let PRICE_BY_TYPE = {};
+function buildPriceMapFromEnv(env){
+  return {
+    single_track: env.STRIPE_PRICE_SINGLE || env.STRIPE_SINGLE_PRICE_ID || STRIPE_PRICE_IDS.single_track,
+    day_pass: env.STRIPE_PRICE_DAYPASS || env.STRIPE_DAY_PASS_PRICE_ID || STRIPE_PRICE_IDS.day_pass,
+    dj_pro: env.STRIPE_PRICE_DJPRO || env.STRIPE_DJ_PRO_PRICE_ID || STRIPE_PRICE_IDS.dj_pro,
+    studio_elite: env.STRIPE_PRICE_STUDIO || env.STRIPE_STUDIO_ELITE_PRICE_ID || STRIPE_PRICE_IDS.studio_elite,
+  };
+}
 
 // --- Stripe helpers (Workers/Edge compatible; no Node SDK) ---
 function formAppend(params, key, value) {
@@ -311,7 +328,7 @@ function getCorsHeaders(request, env) {
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Stripe-Signature, Range, X-FWEA-Admin, X-Requested-With',
         'Access-Control-Max-Age': '86400',
-        'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status',
+        'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status, X-Progress',
         'Cross-Origin-Resource-Policy': 'cross-origin',
         'Timing-Allow-Origin': '*'
     };
@@ -368,6 +385,10 @@ export default {
                     return await handleAccessActivation(request, env, corsHeaders);
                 case '/validate-subscription':
                     return await handleSubscriptionValidation(request, env, corsHeaders);
+                case '/track-event':
+                    return await handleTrackEvent(request, env, corsHeaders);
+                case '/status':
+                    return await handleStatusQuery(request, env, corsHeaders);
                 case '/health':
                     return await handleHealthCheck(request, env, corsHeaders);
                 case '/debug-env':
@@ -386,6 +407,27 @@ export default {
         }
     }
 };
+
+// ---------- Progress Helpers ----------
+async function updateProgress(env, fingerprint, processId, step, percent, extra={}){
+  try{
+    if(!env.PROCESSING_STATE) return;
+    const id = env.PROCESSING_STATE.idFromName(fingerprint || 'anon');
+    const stub = env.PROCESSING_STATE.get(id);
+    await stub.fetch(`https://state/progress`,{method:'PUT', body: JSON.stringify({key: processId, value: {step, percent, ...extra, ts: Date.now()}})});
+  }catch(e){
+    console.warn('progress update failed', e?.message||e);
+  }
+}
+async function readProgress(env, fingerprint, processId){
+  try{
+    if(!env.PROCESSING_STATE) return null;
+    const id = env.PROCESSING_STATE.idFromName(fingerprint || 'anon');
+    const stub = env.PROCESSING_STATE.get(id);
+    const r = await stub.fetch(`https://state/progress?key=${encodeURIComponent(processId)}`);
+    return await r.text();
+  }catch{return null}
+}
 
 // ---------- Enhanced Health Check ----------
 async function handleHealthCheck(request, env, corsHeaders) {
@@ -439,6 +481,8 @@ async function handleAudioProcessing(request, env, corsHeaders) {
         const formData = await request.formData();
         const audioFile = formData.get('audio');
         const fingerprint = formData.get('fingerprint') || 'anonymous';
+        const processId = generateProcessId();
+        await updateProgress(env, fingerprint, processId, 'start', 2, {state: 'uploading'});
         const planType = formData.get('planType') || 'free';
         const admin = isAdminRequest(request, env);
         const effectivePlan = admin ? 'studio_elite' : planType;
@@ -503,7 +547,7 @@ async function handleAudioProcessing(request, env, corsHeaders) {
         }
 
         // Enhanced processing with RunPod fallback
-        const processingResult = await processAudioEnhanced(audioFile, effectivePlan, fingerprint, env, request);
+        const processingResult = await processAudioEnhanced(audioFile, effectivePlan, fingerprint, env, request, processId);
 
         // Store results and update analytics
         await Promise.all([
@@ -511,8 +555,10 @@ async function handleAudioProcessing(request, env, corsHeaders) {
             updateUsageStats(fingerprint, planType, audioFile.size, env)
         ]);
 
+        await updateProgress(env, fingerprint, processId, 'complete', 100, {state:'done'});
         return new Response(JSON.stringify({
             success: true,
+            processId,
             ...processingResult
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -533,14 +579,14 @@ async function handleAudioProcessing(request, env, corsHeaders) {
 }
 
 // ---------- Enhanced Audio Processing with RunPod Integration ----------
-async function processAudioEnhanced(audioFile, planType, fingerprint, env, request) {
+async function processAudioEnhanced(audioFile, planType, fingerprint, env, request, processIdArg) {
     const audioBuffer = await audioFile.arrayBuffer();
     
     if (!audioBuffer || audioBuffer.byteLength < 64) {
         throw new Error('Invalid or empty audio file');
     }
 
-    const processId = generateProcessId();
+    const processId = processIdArg || generateProcessId();
     const watermarkId = generateWatermarkId(fingerprint);
 
     // Multi-stage processing pipeline
@@ -568,15 +614,18 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
     };
 
     try {
+        await updateProgress(env, fingerprint, processId, 'transcribe', 10, {state:'transcribing'});
         // Step 1: Transcription (with RunPod fallback)
         const transcription = await transcribeAudioEnhanced(audioBuffer, env);
         results.cleanTranscription = transcription.text || '';
 
+        await updateProgress(env, fingerprint, processId, 'language-detect', 30, {state:'detectingLangs'});
         // Step 2: Language detection from transcription
         if (transcription.text) {
             results.detectedLanguages = extractLanguagesFromTranscription(transcription.text);
         }
 
+        await updateProgress(env, fingerprint, processId, 'profanity-scan', 50, {state:'scanning'});
         // Step 3: Profanity detection across detected languages
         if (transcription.segments && transcription.segments.length > 0) {
             const profanityResults = await findProfanityTimestampsEnhanced(
@@ -588,6 +637,7 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
             results.profanityTimestamps = profanityResults;
         }
 
+        await updateProgress(env, fingerprint, processId, 'render', 70, {state:'rendering'});
         // Step 4: Audio processing and generation
         const audioResults = await generateAudioOutputsEnhanced(
             audioBuffer,
@@ -601,6 +651,7 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
             request
         );
 
+        await updateProgress(env, fingerprint, processId, 'finalize', 90, {state:'finalizing'});
         // Merge audio results
         Object.assign(results, audioResults);
 
@@ -624,7 +675,9 @@ async function transcribeAudioEnhanced(audioBuffer, env) {
       const buf = audioBuffer.byteLength > maxSize ? audioBuffer.slice(0, maxSize) : audioBuffer;
       const response = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
       if (response && (response.text || response.segments)) {
-        return { text: response.text || '', segments: response.segments || [] };
+        const text = response.text || '';
+        const segments = Array.isArray(response.segments) && response.segments.length ? response.segments : [{start:0,end:Math.max(1, Math.floor((buf?.byteLength||audioBuffer.byteLength)/16000)), text}];
+        return { text, segments };
       }
     }
   } catch (e) {
@@ -641,7 +694,9 @@ async function transcribeAudioEnhanced(audioBuffer, env) {
       const resp = await fetch(`${String(env.TRANSCRIBE_ENDPOINT).replace(/\/+$/, '')}/transcribe`, { method: 'POST', body: form, headers });
       if (!resp.ok) throw new Error(`External transcriber error: ${resp.status}`);
       const data = await resp.json();
-      return { text: data.text || data.transcription || '', segments: data.segments || [] };
+      const text = data.text || data.transcription || '';
+      const segments = Array.isArray(data.segments) && data.segments.length ? data.segments : [{start:0,end:Math.max(1, Math.floor((audioBuffer.byteLength)/16000)), text}];
+      return { text, segments };
     }
   } catch (e) {
     console.warn('External transcription failed:', e?.message || e);
@@ -1124,29 +1179,26 @@ async function handlePaymentCreation(request, env, corsHeaders) {
       });
     }
 
-    const validPriceIds = Object.values(STRIPE_PRICE_IDS);
-    if (!validPriceIds.includes(priceId)) {
-      return new Response(JSON.stringify({ error: 'Invalid price ID' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    PRICE_BY_TYPE = buildPriceMapFromEnv(env);
 
-    if (!['single_track', 'day_pass', 'dj_pro', 'studio_elite'].includes(type)) {
-      return new Response(JSON.stringify({ error: 'Invalid plan type' }), {
+    const priceByType = PRICE_BY_TYPE;
+    const expectedPrice = priceByType[type];
+    if (!expectedPrice) {
+      return new Response(JSON.stringify({ error: `Price not configured for plan '${type}'` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
-
-    if (PRICE_BY_TYPE[type] !== priceId) {
-      return new Response(JSON.stringify({ error: 'Price/type mismatch' }), {
+    if (priceId && priceId !== expectedPrice) {
+      return new Response(JSON.stringify({ error: 'Price/type mismatch', expectedPrice }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+    const finalPriceId = priceId || expectedPrice;
 
     const isSubscription = (type === 'dj_pro' || type === 'studio_elite');
 
     const session = await createCheckoutSession({
-      priceId,
+      priceId: finalPriceId,
       isSubscription,
       email,
       successUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -1160,7 +1212,7 @@ async function handlePaymentCreation(request, env, corsHeaders) {
       }
     }, env);
 
-    await storePaymentIntent(session.id, type, priceId, fingerprint, env);
+    try { await storePaymentIntent(session.id, type, finalPriceId, fingerprint, env); } catch {}
 
     return new Response(JSON.stringify({ success: true, sessionId: session.id, url: session.url }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -1297,7 +1349,7 @@ async function handleAudioDownload(request, env, corsHeaders) {
   if (etag) headers['ETag'] = etag;
   const lastMod = r2Obj?.uploaded || r2Obj?.httpMetadata?.lastModified || null;
   if (lastMod) headers['Last-Modified'] = new Date(lastMod).toUTCString();
-  headers['Content-Disposition'] = key.startsWith('previews/') ? 'inline; filename="preview.mp3"' : 'inline; filename="full.mp3"';
+  headers['Content-Disposition'] = key.startsWith('previews/') ? 'inline; filename="preview.wav"' : 'inline; filename="full.wav"';
   if (!headers['Content-Type'] || !String(headers['Content-Type']).startsWith('audio/')) headers['Content-Type'] = 'audio/mpeg';
 
   if (isPartial) {
@@ -1340,3 +1392,22 @@ async function updateUsageStats(fingerprint, planType, fileSize, env) {
 // If you use a CORS helper or constant, update it here:
 // Example (if not already present):
 // 'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status'
+
+// --------- Analytics and Status Endpoints ----------
+async function handleTrackEvent(request, env, corsHeaders){
+  try{
+    const body = await request.json().catch(()=>({}));
+    console.log('track-event', body?.type || 'event');
+    // no-op analytics sink; keep CORS happy
+    return new Response('OK', {status:200, headers: corsHeaders});
+  }catch{
+    return new Response('OK', {status:200, headers: corsHeaders});
+  }
+}
+async function handleStatusQuery(request, env, corsHeaders){
+  const url = new URL(request.url);
+  const processId = url.searchParams.get('id') || url.searchParams.get('processId') || '';
+  const fingerprint = url.searchParams.get('fp') || 'anonymous';
+  const txt = await readProgress(env, fingerprint, processId);
+  return new Response(txt || 'null', {status:200, headers: {...corsHeaders, 'Content-Type':'application/json'}});
+}

@@ -153,8 +153,8 @@ async function getProfanityTrieFor(lang, env) {
         : null;
 
     const pack = { re, words };
-    PROF_CACHE.set(key, pack);
-    return pack;
+        PROF_CACHE.set(lang, pack);
+        return pack;
 }
 
 function escapeRegExp(s) {
@@ -836,6 +836,7 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
                 fingerprint,
                 previewMs: String(previewDuration * 1000),
                 profanityCount: String(profanityTimestamps.length),
+                profanity: String(profanityTimestamps.length),
                 createdAt: new Date().toISOString()
             }
         });
@@ -874,6 +875,7 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
                         plan: planType,
                         fingerprint,
                         profanityRemoved: String(profanityTimestamps.length),
+                        profanity: String(profanityTimestamps.length),
                         processedAt: new Date().toISOString()
                     }
                 });
@@ -930,6 +932,7 @@ async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKe
       customMetadata: {
         processedBy: 'runpod',
         profanityRemoved: String(profanityTimestamps.length),
+        profanity: String(profanityTimestamps.length),
         processedAt: new Date().toISOString()
       }
     });
@@ -1171,7 +1174,6 @@ function getBitrateForPlan(plan) {
     return bitrates[plan] || '128kbps';
 }
 
-// ---------- Signing and Security ----------
 // ---------- Signing and Security ----------
 async function signR2Key(key, env, ttlSeconds = 15 * 60) {
   if (!env.AUDIO_URL_SECRET) {
@@ -1429,8 +1431,19 @@ async function handleAudioDownload(request, env, corsHeaders) {
     (headers['Access-Control-Expose-Headers'] || 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified') +
     ', X-Preview-Limit-Ms, X-Profanity';
 
-  if (meta && meta.previewMs) headers['X-Preview-Limit-Ms'] = meta.previewMs;
-  if (meta && meta.profanityCount) headers['X-Profanity'] = meta.profanityCount;
+  if (meta && meta.previewMs != null) {
+    headers['X-Preview-Limit-Ms'] = String(meta.previewMs);
+  }
+  if (meta) {
+    const prof = (meta.profanity != null)
+      ? meta.profanity
+      : (meta.profanityCount != null)
+        ? meta.profanityCount
+        : (meta.wordsRemoved != null)
+          ? meta.wordsRemoved
+          : null;
+    if (prof != null) headers['X-Profanity'] = String(prof);
+  }
 
   const etag = r2Obj?.httpEtag || r2Obj?.etag || null;
   if (etag) headers['ETag'] = etag;
@@ -1474,3 +1487,8 @@ async function storeProcessingResult(fingerprint, result, env, planType) {
 async function updateUsageStats(fingerprint, planType, fileSize, env) {
     // Update analytics in D1 if available
 }
+
+// Ensure CORS exposes preview/profanity/processing headers
+// If you use a CORS helper or constant, update it here:
+// Example (if not already present):
+// 'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status'

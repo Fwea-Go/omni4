@@ -1,7 +1,3 @@
-# FWEA-I Complete Backend - Cloudflare Worker
-## Updated with enhanced error handling, RunPod integration, and comprehensive multilingual support
-
-```javascript
 // FWEA-I Backend — Enhanced Cloudflare Worker with RunPod Integration
 import Stripe from 'stripe';
 
@@ -1131,4 +1127,3 @@ async function storeProcessingResult(fingerprint, result, env, planType) {
 async function updateUsageStats(fingerprint, planType, fileSize, env) {
     // Update analytics in D1 if available
 }
-```

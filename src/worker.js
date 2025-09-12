@@ -42,7 +42,7 @@ export class ProcessingStateV2 {
     }
 }
 
-// ---------- Enhanced Profanity Detection with Multiple Libraries ----------
+// ---------- Profanity Detection (Workers-compatible, no external deps) ----------
 const PROF_CACHE = new Map();
 
 async function getProfanityTrieFor(lang, env) {
@@ -52,25 +52,30 @@ async function getProfanityTrieFor(lang, env) {
     let words = await env.PROFANITY_LISTS?.get(key, { type: 'json' });
     if (!Array.isArray(words)) words = [];
 
-    // Enhanced with additional profanity sources
+    // Optional additional words (kept from your version)
     const additionalWords = await getAdditionalProfanityWords(lang);
-    words = [...new Set([...words, ...additionalWords])];
+    words = [...new Set([...words, ...additionalWords].map(w => normalizeForProfanity(String(w))))];
 
-    const { default: Aho } = await import('ahocorasick');
-    const builder = new Aho.Trie();
-    
-    for (const w of words) {
-        if (w) builder.add(normalizeForProfanity(String(w)));
-    }
+    // Build a single regex union. This avoids Node-only deps like `ahocorasick`.
+    const escaped = words
+        .filter(Boolean)
+        .map(escapeRegExp)
+        .sort((a, b) => b.length - a.length); // prefer longer first
 
-    const trie = builder.build();
-    const pack = { trie, words };
+    const re = escaped.length
+        ? new RegExp(`(?:^|[^\\p{L}\\p{N}])(${escaped.join('|')})(?=$|[^\\p{L}\\p{N}])`, 'giu')
+        : null;
+
+    const pack = { re, words };
     PROF_CACHE.set(key, pack);
     return pack;
 }
 
+function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function getAdditionalProfanityWords(lang) {
-    // Extended profanity detection for 100+ languages
     const extendedProfanity = {
         'en': ['damn', 'hell', 'shit', 'fuck', 'bitch', 'ass', 'crap', 'piss', 'bastard', 'whore'],
         'es': ['mierda', 'joder', 'puta', 'cabrón', 'coño', 'gilipollas', 'pendejo', 'culero'],
@@ -104,16 +109,12 @@ async function getAdditionalProfanityWords(lang) {
         'ig': ['nkita', 'onye ara', 'onye iberibe'],
         'ha': ['banza', 'iska', 'dan iska'],
     };
-
     return extendedProfanity[lang] || [];
 }
 
 function normalizeForProfanity(s = '') {
     s = s.toLowerCase();
-    // Enhanced normalization for multilingual support
     s = s.normalize('NFD').replace(/\p{Diacritic}+/gu, '');
-    
-    // Extended leetspeak and character substitutions
     const substitutions = {
         '@': 'a', '4': 'a', 'α': 'a', 'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a',
         '0': 'o', 'ο': 'o', 'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o',
@@ -126,40 +127,31 @@ function normalizeForProfanity(s = '') {
         '6': 'g',
         '2': 'z',
         '+': 't',
-        'х': 'x', // Cyrillic
-        'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', // Cyrillic to Latin
+        'х': 'x',
+        'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y',
     };
-
     for (const [from, to] of Object.entries(substitutions)) {
         s = s.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), to);
     }
-
-    // Collapse repeated characters
     s = s.replace(/(.)\1{2,}/g, '$1$1');
-    
-    // Remove punctuation but keep spaces
     s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-    
     return s;
 }
 
 async function matchProfanity(text, lang, env) {
     const pack = await getProfanityTrieFor(lang, env);
     const norm = normalizeForProfanity(text || '');
-    if (!pack.trie || !norm) return [];
+    if (!pack.re || !norm) return [];
 
     const hits = [];
-    for (const h of pack.trie.find(norm)) {
-        for (const w of h.outputs) {
-            hits.push({ 
-                word: w, 
-                start: h.index - w.length + 1, 
-                end: h.index + 1,
-                confidence: 0.95 
-            });
-        }
+    let m;
+    while ((m = pack.re.exec(norm)) !== null) {
+        const word = m[1] || m[0];
+        const end = m.index + (m[1] ? m[1].length : m[0].length);
+        hits.push({ word, start: m.index, end, confidence: 0.9 });
+        // Prevent infinite loops with zero-width matches
+        if (pack.re.lastIndex === m.index) pack.re.lastIndex++;
     }
-
     return dedupeOverlaps(hits);
 }
 
@@ -168,10 +160,7 @@ function dedupeOverlaps(arr) {
     const out = [];
     let lastEnd = -1;
     for (const m of arr) {
-        if (m.start >= lastEnd) { 
-            out.push(m); 
-            lastEnd = m.end; 
-        }
+        if (m.start >= lastEnd) { out.push(m); lastEnd = m.end; }
     }
     return out;
 }
@@ -185,7 +174,6 @@ function normalizeLangs(langs = []) {
         'finnish': 'fi', 'greek': 'el', 'hebrew': 'he', 'thai': 'th', 'vietnamese': 'vi',
         'malay': 'ms', 'tagalog': 'tl', 'zulu': 'zu', 'yoruba': 'yo', 'igbo': 'ig', 'hausa': 'ha'
     };
-
     const out = new Set();
     for (const l of langs) {
         const k = String(l || '').toLowerCase();
@@ -276,6 +264,11 @@ export default {
             });
         };
 
+        // Serve signed audio from R2 via /audio/*
+        if (path.startsWith('/audio/')) {
+            return await handleAudioDownload(request, env, corsHeaders);
+        }
+
         try {
             // Route handling with enhanced error recovery
             switch (path) {
@@ -293,8 +286,6 @@ export default {
                     return await handleHealthCheck(request, env, corsHeaders);
                 case '/debug-env':
                     return await handleDebugEnv(request, env, corsHeaders);
-                case '/audio/' + encodeURIComponent(url.pathname.split('/audio/')[1]):
-                    return await handleAudioDownload(request, env, corsHeaders);
                 default:
                     return new Response(JSON.stringify({ 
                         error: 'Not Found', 

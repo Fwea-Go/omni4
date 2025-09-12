@@ -1,0 +1,1583 @@
+# Complete Updated HTML Frontend for FWEA-I
+## Enhanced UI/UX with better error handling, mobile responsiveness, and Wix embed optimization
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FWEA-I - Professional Audio Cleaning</title>
+    <meta name="description" content="AI-powered audio cleaning in 100+ languages. Remove profanity from music tracks instantly with professional quality.">
+    
+    <!-- Enhanced Styling for Better UX -->
+    <style>
+        :root {
+            --primary-color: #00D4FF;
+            --secondary-color: #0099CC;
+            --accent-color: #FF6B35;
+            --success-color: #00C851;
+            --warning-color: #FFB700;
+            --error-color: #FF3547;
+            --text-primary: #FFFFFF;
+            --text-secondary: #B0B0B0;
+            --background-dark: #0A0A0A;
+            --background-card: #1A1A1A;
+            --background-hover: #2A2A2A;
+            --border-color: #333333;
+            --gradient-primary: linear-gradient(135deg, #00D4FF 0%, #0099CC 100%);
+            --gradient-secondary: linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%);
+            --shadow-light: 0 4px 20px rgba(0, 212, 255, 0.1);
+            --shadow-heavy: 0 8px 40px rgba(0, 212, 255, 0.2);
+            --border-radius: 12px;
+            --border-radius-large: 20px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            position: relative;
+        }
+
+        /* Enhanced Header */
+        .header {
+            text-align: center;
+            padding: 60px 0 40px;
+            background: var(--gradient-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 800;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+        }
+
+        .header .subtitle {
+            font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .features-bar {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            flex-wrap: wrap;
+            margin-top: 32px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .feature-icon {
+            width: 20px;
+            height: 20px;
+            background: var(--gradient-primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+        }
+
+        /* Enhanced Upload Section */
+        .upload-section {
+            padding: 60px 0;
+            background: var(--background-dark);
+        }
+
+        .upload-card {
+            background: var(--background-card);
+            border: 2px dashed var(--border-color);
+            border-radius: var(--border-radius-large);
+            padding: 60px 40px;
+            text-align: center;
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.1), transparent);
+            transition: left 0.8s;
+        }
+
+        .upload-card:hover::before {
+            left: 100%;
+        }
+
+        .upload-card.dragover {
+            border-color: var(--primary-color);
+            background: rgba(0, 212, 255, 0.05);
+            box-shadow: var(--shadow-light);
+        }
+
+        .upload-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: var(--gradient-primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            transition: var(--transition);
+        }
+
+        .upload-card:hover .upload-icon {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        .upload-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .upload-subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-size: 1.1rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-btn {
+            background: var(--gradient-primary);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+            margin-bottom: 24px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-heavy);
+        }
+
+        .upload-btn:active {
+            transform: translateY(0);
+        }
+
+        .supported-formats {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 24px;
+        }
+
+        .format-tag {
+            background: var(--background-hover);
+            padding: 8px 16px;
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Enhanced Processing Section */
+        .processing-section {
+            display: none;
+            padding: 40px 0;
+        }
+
+        .processing-card {
+            background: var(--background-card);
+            border-radius: var(--border-radius-large);
+            padding: 40px;
+            box-shadow: var(--shadow-light);
+        }
+
+        .processing-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .progress-container {
+            background: var(--background-hover);
+            border-radius: var(--border-radius);
+            padding: 4px;
+            margin-bottom: 24px;
+        }
+
+        .progress-bar {
+            height: 12px;
+            background: var(--gradient-primary);
+            border-radius: var(--border-radius);
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -50%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { left: -50%; }
+            100% { left: 100%; }
+        }
+
+        .progress-text {
+            text-align: center;
+            margin-top: 8px;
+            color: var(--text-secondary);
+        }
+
+        .processing-steps {
+            list-style: none;
+            margin-bottom: 32px;
+        }
+
+        .processing-step {
+            display: flex;
+            align-items: center;
+            padding: 12px 0;
+            transition: var(--transition);
+        }
+
+        .processing-step.active {
+            color: var(--primary-color);
+        }
+
+        .processing-step.completed {
+            color: var(--success-color);
+        }
+
+        .step-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--background-hover);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 16px;
+            font-size: 12px;
+            transition: var(--transition);
+        }
+
+        .processing-step.active .step-icon {
+            background: var(--gradient-primary);
+            animation: pulse 2s infinite;
+        }
+
+        .processing-step.completed .step-icon {
+            background: var(--success-color);
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        /* Enhanced Results Section */
+        .results-section {
+            display: none;
+            padding: 40px 0;
+        }
+
+        .results-card {
+            background: var(--background-card);
+            border-radius: var(--border-radius-large);
+            padding: 40px;
+            box-shadow: var(--shadow-light);
+            border: 1px solid var(--success-color);
+        }
+
+        .results-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: var(--success-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin: 0 auto 16px;
+            animation: successBounce 0.6s ease-out;
+        }
+
+        @keyframes successBounce {
+            0% { transform: scale(0); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+
+        .results-title {
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--success-color);
+        }
+
+        .results-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .stat-item {
+            background: var(--background-hover);
+            padding: 20px;
+            border-radius: var(--border-radius);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .audio-player {
+            background: var(--background-hover);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .player-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .play-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--gradient-primary);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 18px;
+            color: white;
+        }
+
+        .play-btn:hover {
+            transform: scale(1.1);
+            box-shadow: var(--shadow-light);
+        }
+
+        .waveform {
+            flex: 1;
+            height: 48px;
+            background: var(--background-dark);
+            border-radius: var(--border-radius);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+        }
+
+        /* Enhanced Pricing Section */
+        .pricing-section {
+            padding: 80px 0;
+            background: var(--background-card);
+        }
+
+        .pricing-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .pricing-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .pricing-subtitle {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .pricing-card {
+            background: var(--background-dark);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-large);
+            padding: 40px 32px;
+            text-align: center;
+            position: relative;
+            transition: var(--transition);
+        }
+
+        .pricing-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--shadow-heavy);
+            border-color: var(--primary-color);
+        }
+
+        .pricing-card.featured {
+            border-color: var(--primary-color);
+            background: linear-gradient(135deg, var(--background-dark) 0%, rgba(0, 212, 255, 0.05) 100%);
+            transform: scale(1.05);
+        }
+
+        .pricing-card.featured::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--gradient-primary);
+            color: white;
+            padding: 6px 20px;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .plan-name {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .plan-price {
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 8px;
+        }
+
+        .plan-period {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+        }
+
+        .plan-features {
+            list-style: none;
+            margin-bottom: 32px;
+            text-align: left;
+        }
+
+        .plan-feature {
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+            color: var(--text-secondary);
+        }
+
+        .plan-feature::before {
+            content: '✓';
+            color: var(--success-color);
+            font-weight: bold;
+            margin-right: 12px;
+            font-size: 1.2rem;
+        }
+
+        .plan-button {
+            width: 100%;
+            background: var(--background-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 16px 24px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .plan-button:hover {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: white;
+        }
+
+        .pricing-card.featured .plan-button {
+            background: var(--gradient-primary);
+            border-color: var(--primary-color);
+            color: white;
+        }
+
+        /* Alert System */
+        .alert {
+            padding: 16px 20px;
+            border-radius: var(--border-radius);
+            margin-bottom: 24px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .alert.error {
+            background: rgba(255, 53, 71, 0.1);
+            color: var(--error-color);
+            border: 1px solid rgba(255, 53, 71, 0.2);
+        }
+
+        .alert.success {
+            background: rgba(0, 200, 81, 0.1);
+            color: var(--success-color);
+            border: 1px solid rgba(0, 200, 81, 0.2);
+        }
+
+        .alert.warning {
+            background: rgba(255, 183, 0, 0.1);
+            color: var(--warning-color);
+            border: 1px solid rgba(255, 183, 0, 0.2);
+        }
+
+        .alert-icon {
+            font-size: 1.2rem;
+        }
+
+        .alert-close {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 0;
+        }
+
+        /* Loading States */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--background-hover);
+            border-radius: 50%;
+            border-top-color: var(--primary-color);
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+
+            .header {
+                padding: 40px 0 32px;
+            }
+
+            .features-bar {
+                gap: 16px;
+            }
+
+            .upload-card {
+                padding: 40px 24px;
+            }
+
+            .pricing-grid {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+
+            .pricing-card.featured {
+                transform: none;
+                margin-bottom: 16px;
+            }
+
+            .results-stats {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .upload-btn {
+                width: 100%;
+                padding: 18px;
+            }
+
+            .supported-formats {
+                gap: 8px;
+            }
+
+            .format-tag {
+                padding: 6px 12px;
+                font-size: 0.8rem;
+            }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--background-dark);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-color);
+        }
+
+        /* Accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* Wix Embed Optimizations */
+        body.wix-embed {
+            background: transparent;
+            min-height: 100vh;
+        }
+
+        .wix-embed .container {
+            max-width: 100%;
+            padding: 0 12px;
+        }
+
+        .wix-embed .header {
+            padding: 40px 0 24px;
+        }
+
+        .wix-embed .header h1 {
+            font-size: clamp(2rem, 4vw, 3rem);
+        }
+    </style>
+
+    <!-- Stripe Integration -->
+    <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body>
+    <!-- Header Section -->
+    <header class="header">
+        <div class="container">
+            <h1>FWEA-I</h1>
+            <p class="subtitle">Omnilingual Clean Version Editor - Professional Audio Cleaning In 100+ Languages</p>
+            <p class="subtitle">The world's most advanced omnilingual profanity removal tool. Perfect for DJs, artists, and content creators who demand pristine audio quality.</p>
+            
+            <div class="features-bar">
+                <div class="feature-item">
+                    <div class="feature-icon">🌍</div>
+                    <span>100+ Languages Supported</span>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🤖</div>
+                    <span>AI-Powered Precision</span>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">⚡</div>
+                    <span>Lightning Fast Processing</span>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🔒</div>
+                    <span>Studio-Grade Security</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Alert Container -->
+    <div id="alertContainer" class="container"></div>
+
+    <!-- Upload Section -->
+    <section class="upload-section" id="uploadSection">
+        <div class="container">
+            <div class="upload-card" id="uploadCard">
+                <div class="upload-icon">🎵</div>
+                <h2 class="upload-title">Drag & Drop Your Audio</h2>
+                <p class="upload-subtitle">Upload your track and experience the future of audio cleaning</p>
+                
+                <input type="file" id="audioInput" class="file-input" accept="audio/*" multiple>
+                <button class="upload-btn" onclick="document.getElementById('audioInput').click()">
+                    <span id="uploadBtnText">Choose Audio Files</span>
+                </button>
+                
+                <div class="supported-formats">
+                    <span class="format-tag">MP3</span>
+                    <span class="format-tag">WAV</span>
+                    <span class="format-tag">FLAC</span>
+                    <span class="format-tag">M4A</span>
+                    <span class="format-tag">AAC</span>
+                    <span class="format-tag">OGG</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Processing Section -->
+    <section class="processing-section" id="processingSection">
+        <div class="container">
+            <div class="processing-card">
+                <h2 class="processing-title">Processing Your Audio</h2>
+                <p id="processingStatus">Initializing AI engine...</p>
+                
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-text" id="progressText">0% - Estimated time: 2-3 minutes</div>
+                
+                <div id="detectedLanguages" style="text-align: center; margin: 16px 0; color: var(--text-secondary);">
+                    🔍 <span>Detecting Languages: <span id="languageList">English</span></span>
+                </div>
+                
+                <ul class="processing-steps">
+                    <li class="processing-step" id="step1">
+                        <div class="step-icon">1</div>
+                        <span>Audio Analysis</span>
+                    </li>
+                    <li class="processing-step" id="step2">
+                        <div class="step-icon">2</div>
+                        <span>Language Detection</span>
+                    </li>
+                    <li class="processing-step" id="step3">
+                        <div class="step-icon">3</div>
+                        <span>Content Filtering</span>
+                    </li>
+                    <li class="processing-step" id="step4">
+                        <div class="step-icon">4</div>
+                        <span>Audio Reconstruction</span>
+                    </li>
+                    <li class="processing-step" id="step5">
+                        <div class="step-icon">5</div>
+                        <span>Quality Enhancement</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Results Section -->
+    <section class="results-section" id="resultsSection">
+        <div class="container">
+            <div class="results-card">
+                <div class="results-header">
+                    <div class="success-icon">🎉</div>
+                    <h2 class="results-title">Your Clean Audio is Ready!</h2>
+                </div>
+                
+                <div class="results-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="wordsRemoved">5</div>
+                        <div class="stat-label">inappropriate words removed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="languagesDetected">2</div>
+                        <div class="stat-label">languages detected</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="qualityEnhanced">AI</div>
+                        <div class="stat-label">Quality enhanced with AI</div>
+                    </div>
+                </div>
+
+                <div class="audio-player">
+                    <div class="player-controls">
+                        <button class="play-btn" id="previewPlayBtn">▶️</button>
+                        <div class="waveform">
+                            <audio id="previewAudio" preload="metadata"></audio>
+                            <span id="audioTime">0:00 / 0:30</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="processingComplete" style="text-align: center; margin: 24px 0;">
+                    <p style="color: var(--success-color); font-weight: 600; margin-bottom: 8px;">✨ Processing Complete!</p>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem;" id="processingStats">5 inappropriate words removed • 2 languages detected • Quality enhanced with AI</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="pricing-section">
+        <div class="container">
+            <div class="pricing-header">
+                <h2 class="pricing-title">Choose Your Plan</h2>
+                <p class="pricing-subtitle">Get instant access to clean, professional-quality audio</p>
+            </div>
+            
+            <div class="pricing-grid">
+                <!-- Single Track -->
+                <div class="pricing-card">
+                    <h3 class="plan-name">Single Track</h3>
+                    <div class="plan-price">$4.99</div>
+                    <div class="plan-period">per track</div>
+                    <ul class="plan-features">
+                        <li class="plan-feature">1 audio track cleaning</li>
+                        <li class="plan-feature">All 100+ languages</li>
+                        <li class="plan-feature">30-second preview</li>
+                        <li class="plan-feature">HD audio quality</li>
+                        <li class="plan-feature">Instant download</li>
+                    </ul>
+                    <button class="plan-button" onclick="selectPlan('single_track')">Get Single Track</button>
+                </div>
+
+                <!-- DJ Pro (Featured) -->
+                <div class="pricing-card featured">
+                    <h3 class="plan-name">DJ Pro</h3>
+                    <div class="plan-price">$29.99</div>
+                    <div class="plan-period">per month</div>
+                    <ul class="plan-features">
+                        <li class="plan-feature">Unlimited track cleaning</li>
+                        <li class="plan-feature">All 100+ languages</li>
+                        <li class="plan-feature">30-second previews</li>
+                        <li class="plan-feature">Priority processing</li>
+                        <li class="plan-feature">Batch processing</li>
+                        <li class="plan-feature">Professional support</li>
+                    </ul>
+                    <button class="plan-button" onclick="selectPlan('dj_pro')">Start DJ Pro</button>
+                </div>
+
+                <!-- Studio Elite -->
+                <div class="pricing-card">
+                    <h3 class="plan-name">Studio Elite</h3>
+                    <div class="plan-price">$99.99</div>
+                    <div class="plan-period">per month</div>
+                    <ul class="plan-features">
+                        <li class="plan-feature">Everything in DJ Pro</li>
+                        <li class="plan-feature">60-second previews</li>
+                        <li class="plan-feature">Studio-grade quality</li>
+                        <li class="plan-feature">API access</li>
+                        <li class="plan-feature">Custom AI training</li>
+                        <li class="plan-feature">Dedicated support</li>
+                        <li class="plan-feature">Commercial licensing</li>
+                    </ul>
+                    <button class="plan-button" onclick="selectPlan('studio_elite')">Start Studio Elite</button>
+                </div>
+
+                <!-- Day Pass -->
+                <div class="pricing-card">
+                    <h3 class="plan-name">Day Pass</h3>
+                    <div class="plan-price">$9.99</div>
+                    <div class="plan-period">24 hours</div>
+                    <ul class="plan-features">
+                        <li class="plan-feature">Unlimited tracks (24h)</li>
+                        <li class="plan-feature">All 100+ languages</li>
+                        <li class="plan-feature">30-second previews</li>
+                        <li class="plan-feature">Batch processing</li>
+                        <li class="plan-feature">HD audio quality</li>
+                    </ul>
+                    <button class="plan-button" onclick="selectPlan('day_pass')">Book Online</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Enhanced JavaScript -->
+    <script>
+        // Configuration with enhanced error handling
+        const CONFIG = {
+            API_BASE: 'https://omnibackend2.fweago-flavaz.workers.dev',
+            MAX_FILE_SIZE: {
+                free: 50 * 1024 * 1024,      // 50MB
+                single_track: 100 * 1024 * 1024,  // 100MB
+                day_pass: 200 * 1024 * 1024,      // 200MB
+                dj_pro: 500 * 1024 * 1024,        // 500MB
+                studio_elite: 2 * 1024 * 1024 * 1024 // 2GB
+            },
+            SUPPORTED_FORMATS: [
+                'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav',
+                'audio/flac', 'audio/x-flac', 'audio/ogg', 'audio/opus',
+                'audio/mp4', 'audio/m4a', 'audio/aac', 'audio/webm'
+            ],
+            STRIPE_PRICE_IDS: {
+                single_track: 'price_1S4NnmJ2Iq1764pCjA9xMnrn',
+                dj_pro: 'price_1S4NpzJ2Iq1764pCcZISuhug',
+                studio_elite: 'price_1S4Nr3J2Iq1764pCzHY4zIWr',
+                day_pass: 'price_1S4NsTJ2Iq1764pCCbru0Aao'
+            },
+            ADMIN_HEADER: 'your-admin-token-here' // Set this to your admin token
+        };
+
+        // Enhanced State Management
+        class AppState {
+            constructor() {
+                this.currentFile = null;
+                this.currentPlan = 'free';
+                this.processingResult = null;
+                this.isProcessing = false;
+                this.userFingerprint = this.generateFingerprint();
+                this.isAdmin = false;
+            }
+
+            generateFingerprint() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                ctx.textBaseline = 'top';
+                ctx.font = '14px Arial';
+                ctx.fillText('Browser fingerprint', 2, 2);
+                
+                return btoa(JSON.stringify({
+                    screen: `${screen.width}x${screen.height}`,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    language: navigator.language,
+                    canvas: canvas.toDataURL(),
+                    timestamp: Date.now()
+                })).substr(0, 32);
+            }
+
+            reset() {
+                this.currentFile = null;
+                this.processingResult = null;
+                this.isProcessing = false;
+                this.showSection('upload');
+            }
+
+            showSection(section) {
+                const sections = ['upload', 'processing', 'results'];
+                sections.forEach(s => {
+                    const el = document.getElementById(`${s}Section`);
+                    if (el) el.style.display = s === section ? 'block' : 'none';
+                });
+            }
+        }
+
+        const appState = new AppState();
+        let stripe;
+
+        // Enhanced Initialization
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                // Initialize Stripe
+                stripe = Stripe('pk_test_51JvRG6J2Iq1764pCcZISuhugHE4c3Qa1FjyWTgFgFgFgFgFgFgFgFgFg'); // Replace with your publishable key
+                
+                // Check if running in Wix
+                if (window.parent !== window) {
+                    document.body.classList.add('wix-embed');
+                }
+
+                // Setup event listeners
+                setupEventListeners();
+                
+                // Check admin status
+                checkAdminStatus();
+
+                console.log('🎵 FWEA-I initialized successfully');
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showAlert('Failed to initialize application. Please refresh the page.', 'error');
+            }
+        });
+
+        // Enhanced Event Listeners Setup
+        function setupEventListeners() {
+            const audioInput = document.getElementById('audioInput');
+            const uploadCard = document.getElementById('uploadCard');
+            const previewPlayBtn = document.getElementById('previewPlayBtn');
+            const previewAudio = document.getElementById('previewAudio');
+
+            // File input change
+            audioInput.addEventListener('change', handleFileSelect);
+
+            // Drag and drop
+            uploadCard.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadCard.classList.add('dragover');
+            });
+
+            uploadCard.addEventListener('dragleave', () => {
+                uploadCard.classList.remove('dragover');
+            });
+
+            uploadCard.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadCard.classList.remove('dragover');
+                
+                const files = Array.from(e.dataTransfer.files);
+                const audioFiles = files.filter(file => 
+                    CONFIG.SUPPORTED_FORMATS.includes(file.type)
+                );
+
+                if (audioFiles.length > 0) {
+                    handleFileUpload(audioFiles[0]);
+                } else {
+                    showAlert('Please drop a valid audio file (MP3, WAV, FLAC, etc.)', 'warning');
+                }
+            });
+
+            // Preview player
+            previewPlayBtn.addEventListener('click', togglePreviewPlayback);
+            
+            previewAudio.addEventListener('timeupdate', updateAudioTime);
+            previewAudio.addEventListener('loadedmetadata', () => {
+                updateAudioTime();
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && appState.isProcessing) {
+                    // Cancel processing (if supported)
+                    cancelProcessing();
+                }
+            });
+        }
+
+        // File Selection Handler
+        function handleFileSelect(event) {
+            const files = Array.from(event.target.files);
+            if (files.length > 0) {
+                handleFileUpload(files[0]);
+            }
+        }
+
+        // Enhanced File Upload Handler
+        async function handleFileUpload(file) {
+            try {
+                // Validate file type
+                if (!CONFIG.SUPPORTED_FORMATS.includes(file.type)) {
+                    showAlert(`Unsupported file format: ${file.type}. Please use MP3, WAV, FLAC, M4A, AAC, or OGG.`, 'error');
+                    return;
+                }
+
+                // Validate file size
+                const maxSize = CONFIG.MAX_FILE_SIZE[appState.currentPlan];
+                if (file.size > maxSize) {
+                    const maxSizeMB = Math.floor(maxSize / (1024 * 1024));
+                    const currentSizeMB = Math.floor(file.size / (1024 * 1024));
+                    showAlert(`File too large (${currentSizeMB}MB). Maximum size for ${appState.currentPlan} plan: ${maxSizeMB}MB`, 'warning');
+                    
+                    if (appState.currentPlan === 'free') {
+                        showAlert('Upgrade to a paid plan for larger files', 'warning');
+                    }
+                    return;
+                }
+
+                appState.currentFile = file;
+                await processAudioFile(file);
+
+            } catch (error) {
+                console.error('File upload error:', error);
+                showAlert('Failed to process file. Please try again.', 'error');
+            }
+        }
+
+        // Enhanced Audio Processing
+        async function processAudioFile(file) {
+            if (appState.isProcessing) return;
+            
+            appState.isProcessing = true;
+            appState.showSection('processing');
+
+            try {
+                // Create FormData
+                const formData = new FormData();
+                formData.append('audio', file);
+                formData.append('fingerprint', appState.userFingerprint);
+                formData.append('planType', appState.currentPlan);
+
+                // Setup request headers
+                const headers = {};
+                if (appState.isAdmin) {
+                    headers['X-FWEA-Admin'] = CONFIG.ADMIN_HEADER;
+                }
+
+                // Start progress animation
+                updateProgress(0, 'Uploading audio file...');
+                animateProcessingSteps();
+
+                // Make API request
+                const response = await fetch(`${CONFIG.API_BASE}/process-audio`, {
+                    method: 'POST',
+                    body: formData,
+                    headers
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    appState.processingResult = result;
+                    await handleProcessingSuccess(result);
+                } else {
+                    throw new Error(result.error || result.details || 'Processing failed');
+                }
+
+            } catch (error) {
+                console.error('Processing error:', error);
+                handleProcessingError(error);
+            } finally {
+                appState.isProcessing = false;
+            }
+        }
+
+        // Progress Animation
+        function animateProcessingSteps() {
+            const steps = ['step1', 'step2', 'step3', 'step4', 'step5'];
+            let currentStep = 0;
+            
+            const stepInterval = setInterval(() => {
+                if (!appState.isProcessing) {
+                    clearInterval(stepInterval);
+                    return;
+                }
+
+                if (currentStep > 0) {
+                    const prevStep = document.getElementById(steps[currentStep - 1]);
+                    prevStep.classList.remove('active');
+                    prevStep.classList.add('completed');
+                }
+
+                if (currentStep < steps.length) {
+                    const step = document.getElementById(steps[currentStep]);
+                    step.classList.add('active');
+                    updateProgress((currentStep + 1) * 20, getStepMessage(currentStep + 1));
+                }
+
+                currentStep++;
+                
+                if (currentStep > steps.length) {
+                    clearInterval(stepInterval);
+                    updateProgress(100, 'Finalizing...');
+                }
+            }, 2000);
+        }
+
+        function getStepMessage(step) {
+            const messages = [
+                'Analyzing audio structure...',
+                'Detecting languages and content...',
+                'Identifying inappropriate content...',
+                'Processing and cleaning audio...',
+                'Optimizing quality and finalizing...'
+            ];
+            return messages[step - 1] || 'Processing...';
+        }
+
+        function updateProgress(percent, message) {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const processingStatus = document.getElementById('processingStatus');
+
+            if (progressBar) progressBar.style.width = `${percent}%`;
+            if (progressText) progressText.textContent = `${percent}%`;
+            if (processingStatus) processingStatus.textContent = message;
+        }
+
+        // Success Handler
+        async function handleProcessingSuccess(result) {
+            // Update UI with results
+            updateResultsDisplay(result);
+            
+            // Setup preview audio
+            if (result.previewUrl) {
+                const previewAudio = document.getElementById('previewAudio');
+                previewAudio.src = result.previewUrl;
+                previewAudio.load();
+            }
+
+            // Update language display
+            if (result.detectedLanguages) {
+                const languageList = document.getElementById('languageList');
+                if (languageList) {
+                    languageList.textContent = result.detectedLanguages.join(', ');
+                }
+            }
+
+            appState.showSection('results');
+            
+            // Show success message
+            showAlert('Audio processing completed successfully!', 'success');
+
+            // Analytics
+            trackEvent('audio_processed', {
+                plan: appState.currentPlan,
+                fileSize: appState.currentFile?.size,
+                wordsRemoved: result.wordsRemoved,
+                languages: result.detectedLanguages?.length || 0
+            });
+        }
+
+        // Error Handler
+        function handleProcessingError(error) {
+            console.error('Processing failed:', error);
+            
+            let errorMessage = 'Audio processing failed. Please try again.';
+            let upgradeRequired = false;
+
+            if (error.message) {
+                if (error.message.includes('Access denied')) {
+                    errorMessage = 'Please upgrade your plan to process this audio file.';
+                    upgradeRequired = true;
+                } else if (error.message.includes('File too large')) {
+                    errorMessage = 'File is too large for your current plan. Please upgrade or use a smaller file.';
+                    upgradeRequired = true;
+                } else if (error.message.includes('Storage not configured')) {
+                    errorMessage = 'Service temporarily unavailable. Please try again later.';
+                } else {
+                    errorMessage = error.message;
+                }
+            }
+
+            showAlert(errorMessage, 'error');
+
+            if (upgradeRequired) {
+                setTimeout(() => {
+                    showPricingHighlight();
+                }, 2000);
+            }
+
+            appState.showSection('upload');
+        }
+
+        // Results Display
+        function updateResultsDisplay(result) {
+            const elements = {
+                wordsRemoved: document.getElementById('wordsRemoved'),
+                languagesDetected: document.getElementById('languagesDetected'),
+                processingStats: document.getElementById('processingStats')
+            };
+
+            if (elements.wordsRemoved) {
+                elements.wordsRemoved.textContent = result.wordsRemoved || 0;
+            }
+            
+            if (elements.languagesDetected) {
+                elements.languagesDetected.textContent = result.detectedLanguages?.length || 1;
+            }
+
+            if (elements.processingStats) {
+                const stats = [
+                    `${result.wordsRemoved || 0} inappropriate words removed`,
+                    `${result.detectedLanguages?.length || 1} languages detected`,
+                    `Quality enhanced with AI`
+                ].join(' • ');
+                elements.processingStats.textContent = stats;
+            }
+        }
+
+        // Audio Player Controls
+        function togglePreviewPlayback() {
+            const previewAudio = document.getElementById('previewAudio');
+            const playBtn = document.getElementById('previewPlayBtn');
+
+            if (!previewAudio.src) {
+                showAlert('No audio available to play', 'warning');
+                return;
+            }
+
+            if (previewAudio.paused) {
+                previewAudio.play().then(() => {
+                    playBtn.textContent = '⏸️';
+                }).catch(error => {
+                    console.error('Playback failed:', error);
+                    showAlert('Failed to play audio. Please check your connection.', 'error');
+                });
+            } else {
+                previewAudio.pause();
+                playBtn.textContent = '▶️';
+            }
+
+            previewAudio.addEventListener('ended', () => {
+                playBtn.textContent = '▶️';
+            });
+        }
+
+        function updateAudioTime() {
+            const previewAudio = document.getElementById('previewAudio');
+            const audioTime = document.getElementById('audioTime');
+            
+            if (previewAudio && audioTime && previewAudio.duration) {
+                const current = Math.floor(previewAudio.currentTime);
+                const total = Math.floor(previewAudio.duration);
+                audioTime.textContent = `${formatTime(current)} / ${formatTime(total)}`;
+            }
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Plan Selection and Stripe Integration
+        async function selectPlan(planType) {
+            if (!appState.processingResult && planType !== 'free') {
+                showAlert('Please upload and process an audio file first.', 'warning');
+                return;
+            }
+
+            try {
+                appState.currentPlan = planType;
+
+                if (planType === 'free') {
+                    showAlert('You are using the free plan with 30-second previews.', 'success');
+                    return;
+                }
+
+                // Track plan selection
+                trackEvent('plan_selected', { plan: planType });
+
+                // Create Stripe checkout session
+                const priceId = CONFIG.STRIPE_PRICE_IDS[planType];
+                if (!priceId) {
+                    throw new Error(`Invalid plan type: ${planType}`);
+                }
+
+                showAlert('Redirecting to secure payment...', 'success');
+
+                const response = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        priceId,
+                        type: planType,
+                        fileName: appState.currentFile?.name || 'audio.mp3',
+                        fingerprint: appState.userFingerprint,
+                        email: null // Will be collected in Stripe checkout
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success && result.url) {
+                    // Redirect to Stripe Checkout
+                    window.location.href = result.url;
+                } else {
+                    throw new Error(result.error || 'Failed to create payment session');
+                }
+
+            } catch (error) {
+                console.error('Plan selection error:', error);
+                showAlert('Failed to process payment. Please try again.', 'error');
+            }
+        }
+
+        // Alert System
+        function showAlert(message, type = 'info') {
+            const alertContainer = document.getElementById('alertContainer');
+            if (!alertContainer) return;
+
+            const alert = document.createElement('div');
+            alert.className = `alert ${type}`;
+            alert.innerHTML = `
+                <div class="alert-icon">${getAlertIcon(type)}</div>
+                <div class="alert-message">${message}</div>
+                <button class="alert-close" onclick="this.parentElement.remove()">×</button>
+            `;
+
+            alert.style.display = 'flex';
+            alertContainer.appendChild(alert);
+
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (alert.parentElement) {
+                    alert.remove();
+                }
+            }, 5000);
+
+            // Scroll to alert
+            alert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function getAlertIcon(type) {
+            const icons = {
+                success: '✅',
+                error: '❌',
+                warning: '⚠️',
+                info: 'ℹ️'
+            };
+            return icons[type] || icons.info;
+        }
+
+        // Pricing Highlight
+        function showPricingHighlight() {
+            const pricingSection = document.querySelector('.pricing-section');
+            if (pricingSection) {
+                pricingSection.scrollIntoView({ behavior: 'smooth' });
+                
+                // Highlight featured card
+                const featuredCard = document.querySelector('.pricing-card.featured');
+                if (featuredCard) {
+                    featuredCard.style.animation = 'pulse 2s ease-in-out 3';
+                }
+            }
+        }
+
+        // Admin Status Check
+        async function checkAdminStatus() {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE}/health`, {
+                    headers: { 'X-FWEA-Admin': CONFIG.ADMIN_HEADER }
+                });
+                
+                if (response.ok) {
+                    appState.isAdmin = true;
+                    console.log('🔑 Admin access enabled');
+                }
+            } catch (error) {
+                // Not admin, continue as normal user
+                console.log('👤 Running as normal user');
+            }
+        }
+
+        // Analytics
+        function trackEvent(eventName, properties = {}) {
+            try {
+                const eventData = {
+                    event: eventName,
+                    fingerprint: appState.userFingerprint,
+                    planType: appState.currentPlan,
+                    userAgent: navigator.userAgent,
+                    timestamp: new Date().toISOString(),
+                    ...properties
+                };
+
+                fetch(`${CONFIG.API_BASE}/track-event`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(eventData)
+                }).catch(() => {
+                    // Analytics failure shouldn't break the app
+                });
+            } catch (error) {
+                // Silent fail for analytics
+            }
+        }
+
+        // Utility Functions
+        function cancelProcessing() {
+            if (appState.isProcessing) {
+                appState.isProcessing = false;
+                showAlert('Processing cancelled', 'warning');
+                appState.showSection('upload');
+            }
+        }
+
+        // URL Parameter Handling (for payment success/cancel)
+        function handleUrlParameters() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sessionId = urlParams.get('session_id');
+            const cancelled = urlParams.get('cancelled');
+
+            if (sessionId) {
+                showAlert('Payment successful! You can now download your clean audio.', 'success');
+                // Implement download logic here
+            } else if (cancelled) {
+                showAlert('Payment cancelled. You can try again anytime.', 'warning');
+            }
+        }
+
+        // Initialize URL parameter handling
+        document.addEventListener('DOMContentLoaded', handleUrlParameters);
+
+        // Export functions for global access
+        window.FWEAI = {
+            selectPlan,
+            showAlert,
+            trackEvent,
+            appState,
+            CONFIG
+        };
+
+        console.log('🎵 FWEA-I Frontend loaded successfully');
+    </script>
+
+    <!-- Additional Meta Tags for Better Wix Integration -->
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="origin-when-cross-origin">
+</body>
+</html>
+```

@@ -888,6 +888,10 @@
                     <p style="color: var(--success-color); font-weight: 600; margin-bottom: 8px;">✨ Processing Complete!</p>
                     <p style="color: var(--text-secondary); font-size: 0.9rem;" id="processingStats">5 inappropriate words removed • 2 languages detected • Quality enhanced with AI</p>
                 </div>
+                <div id="ctaButtons" style="text-align:center; margin-top:16px;">
+                    <a id="downloadLink" class="plan-button" style="display:none; max-width:280px; margin:0 auto; text-decoration:none;" download>Download Clean MP3</a>
+                    <button id="upgradeBtn" class="plan-button" style="display:none; max-width:280px; margin:12px auto 0;">Unlock Full Download</button>
+                </div>
             </div>
         </div>
     </section>
@@ -1205,34 +1209,22 @@
 
         // Progress Animation
         function animateProcessingSteps() {
-            const steps = ['step1', 'step2', 'step3', 'step4', 'step5'];
-            let currentStep = 0;
-            
-            const stepInterval = setInterval(() => {
-                if (!appState.isProcessing) {
-                    clearInterval(stepInterval);
-                    return;
-                }
-
-                if (currentStep > 0) {
-                    const prevStep = document.getElementById(steps[currentStep - 1]);
-                    prevStep.classList.remove('active');
-                    prevStep.classList.add('completed');
-                }
-
-                if (currentStep < steps.length) {
-                    const step = document.getElementById(steps[currentStep]);
-                    step.classList.add('active');
-                    updateProgress((currentStep + 1) * 20, getStepMessage(currentStep + 1));
-                }
-
-                currentStep++;
-                
-                if (currentStep > steps.length) {
-                    clearInterval(stepInterval);
-                    updateProgress(100, 'Finalizing...');
-                }
-            }, 2000);
+            const steps = [
+                document.getElementById('step1'),
+                document.getElementById('step2'),
+                document.getElementById('step3'),
+                document.getElementById('step4'),
+                document.getElementById('step5'),
+            ];
+            steps.forEach(s => s.classList.remove('active','completed'));
+            let i = 0;
+            const tick = () => {
+                if (i > 0) steps[i-1].classList.add('completed');
+                if (i < steps.length) steps[i].classList.add('active');
+                i++;
+                if (i < steps.length) setTimeout(tick, 1200);
+            };
+            tick();
         }
 
         function getStepMessage(step) {
@@ -1246,48 +1238,58 @@
             return messages[step - 1] || 'Processing...';
         }
 
-        function updateProgress(percent, message) {
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
-            const processingStatus = document.getElementById('processingStatus');
-
-            if (progressBar) progressBar.style.width = `${percent}%`;
-            if (progressText) progressText.textContent = `${percent}%`;
-            if (processingStatus) processingStatus.textContent = message;
+        function updateProgress(pct, label) {
+            const bar = document.getElementById('progressBar');
+            const txt = document.getElementById('progressText');
+            const status = document.getElementById('processingStatus');
+            const p = Math.max(0, Math.min(100, Number(pct) || 0));
+            if (bar) bar.style.width = `${p}%`;
+            if (txt) txt.textContent = `${Math.floor(p)}%${label ? ' - ' + label : ''}`;
+            if (status && label) status.textContent = label;
         }
 
         // Success Handler
         async function handleProcessingSuccess(result) {
-            // Update UI with results
-            updateResultsDisplay(result);
-            
-            // Setup preview audio
+            updateProgress(100, 'Finalizing...');
+            // Update quick stats with safe fallbacks
+            document.getElementById('wordsRemoved').textContent = result.wordsRemoved || result.profanityCount || '0';
+            document.getElementById('languagesDetected').textContent = (result.detectedLanguages && result.detectedLanguages.length) ? result.detectedLanguages.length : (result.languages && result.languages.length) ? result.languages.length : 1;
+            document.getElementById('qualityEnhanced').textContent = 'AI';
+
+            // Set preview audio if returned
+            const previewEl = document.getElementById('previewAudio');
             if (result.previewUrl) {
-                const previewAudio = document.getElementById('previewAudio');
-                previewAudio.src = result.previewUrl;
-                previewAudio.load();
+                previewEl.src = result.previewUrl;
+                try { await previewEl.load(); } catch {}
             }
 
-            // Update language display
-            if (result.detectedLanguages) {
-                const languageList = document.getElementById('languageList');
-                if (languageList) {
-                    languageList.textContent = result.detectedLanguages.join(', ');
+            // CTA logic: show download if we have full url, otherwise show upgrade
+            const dl = document.getElementById('downloadLink');
+            const up = document.getElementById('upgradeBtn');
+            if (dl) dl.style.display = 'none';
+            if (up) up.style.display = 'none';
+
+            if (result.fullAudioUrl) {
+                if (dl) {
+                    dl.href = result.fullAudioUrl;
+                    dl.style.display = 'inline-block';
                 }
+            } else if (up) {
+                up.style.display = 'inline-block';
+                up.onclick = () => {
+                    const type = appState.currentPlan === 'free' ? 'single_track' : appState.currentPlan;
+                    startCheckout(type, appState.currentFile ? appState.currentFile.name : 'track');
+                };
+            }
+
+            // Detected language list (nice-to-have)
+            if (Array.isArray(result.detectedLanguages)) {
+                const languageList = document.getElementById('languageList');
+                if (languageList) languageList.textContent = result.detectedLanguages.join(', ');
             }
 
             appState.showSection('results');
-            
-            // Show success message
-            showAlert('Audio processing completed successfully!', 'success');
-
-            // Analytics
-            trackEvent('audio_processed', {
-                plan: appState.currentPlan,
-                fileSize: appState.currentFile?.size,
-                wordsRemoved: result.wordsRemoved,
-                languages: result.detectedLanguages?.length || 0
-            });
+            showAlert('Processing complete! Preview is ready below.', 'success');
         }
 
         // Error Handler
@@ -1581,3 +1583,26 @@
 </body>
 </html>
 ```
+
+        // Ensure startCheckout exists
+        if (typeof startCheckout !== 'function') {
+        /**
+         * Stripe Checkout helper for unlocking downloads/upgrades.
+         */
+        async function startCheckout(type, fileName, email) {
+            try {
+                const priceId = CONFIG.STRIPE_PRICE_IDS[type];
+                if (!priceId) return showAlert('Invalid plan type selected.', 'error');
+                const resp = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ priceId, type, fileName, email, fingerprint: appState.userFingerprint })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) throw new Error(data.error || 'Checkout failed');
+                window.location.href = data.url; // Stripe-hosted checkout
+            } catch (e) {
+                showAlert(e.message || 'Checkout failed', 'error');
+            }
+        }
+        }

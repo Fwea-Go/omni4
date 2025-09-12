@@ -624,38 +624,38 @@ async function transcribeAudioEnhanced(audioBuffer, env) {
     return { text: '', segments: [] };
 }
 
-// RunPod transcription integration
-const apiUrl = (env.RUNPOD_API_URL || '').trim();
-const apiKey = (env.RUNPOD_API_KEY || '').trim();
-if (!apiUrl || !apiKey) {
-  throw new Error('RunPod not configured');
+// RunPod transcription // RunPod transcription integration
+async function transcribeWithRunPod(audioBuffer, env) {
+  const apiUrl = (env.RUNPOD_API_URL || '').trim();
+  const apiKey = (env.RUNPOD_API_KEY || '').trim();
+  if (!apiUrl || !apiKey) throw new Error('RunPod not configured');
+
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      input: {
+        audio_base64: b64,
+        model: 'large-v3',
+        transcription: 'segments',
+        language: 'auto',
+        return_timestamps: true
+      }
+    })
+  });
+
+  if (!response.ok) throw new Error(`RunPod API error: ${response.status}`);
+  const data = await response.json();
+  const output = data.output || data;
+  return {
+    text: output.transcription || output.text || '',
+    segments: Array.isArray(output.segments) ? output.segments : []
+  };
 }
-
-const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
-const response = await fetch(apiUrl, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    input: {
-      audio_base64: b64,
-      model: 'large-v3',
-      transcription: 'segments',
-      language: 'auto',
-      return_timestamps: true
-    }
-  })
-});
-
-if (!response.ok) throw new Error(`RunPod API error: ${response.status}`);
-const data = await response.json();
-const output = data.output || data;
-return {
-  text: output.transcription || output.text || '',
-  segments: Array.isArray(output.segments) ? output.segments : []
-};
 
 // Cloudflare AI transcription
 async function transcribeWithCloudflareAI(audioBuffer, env) {
@@ -883,49 +883,47 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
 
 // ---------- RunPod Audio Processing ----------
 async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKey, env, mimeType, request) {
-    if (!env.RUNPOD_AUDIO_ENDPOINT || !env.RUNPOD_API_KEY) {
-        throw new Error('RunPod audio processing not configured');
-    }
+      const apiUrl = (env.RUNPOD_API_URL || '').trim();
+  const apiKey = (env.RUNPOD_API_KEY || '').trim();
+  if (!apiUrl || !apiKey) throw new Error('RunPod audio processing not configured');
 
-    const apiUrl = (env.RUNPOD_API_URL || '').trim();
-const apiKey = (env.RUNPOD_API_KEY || '').trim();
-if (!apiUrl || !apiKey) throw new Error('RunPod audio processing not configured');
-
-const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
-const response = await fetch(apiUrl, {
-  method: 'POST',
-  headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    input: {
-      audio_base64: b64,
-      profanity_timestamps: profanityTimestamps,
-      output_format: mimeType,
-      processing_mode: 'advanced_clean',
-      quality: 'high'
-    }
-  })
-});
-
-if (!response.ok) throw new Error(`RunPod audio processing failed: ${response.status}`);
-const result = await response.json();
-const out = result.output || {};
-
-if (out.processed_audio_base64) {
-  const processedBuffer = Uint8Array.from(atob(out.processed_audio_base64), c => c.charCodeAt(0));
-  await env.AUDIO_STORAGE.put(outputKey, processedBuffer, {
-    httpMetadata: { contentType: mimeType, cacheControl: 'private, max-age=7200' },
-    customMetadata: {
-      processedBy: 'runpod',
-      profanityRemoved: String(profanityTimestamps.length),
-      processedAt: new Date().toISOString()
-    }
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      input: {
+        audio_base64: b64,
+        profanity_timestamps: profanityTimestamps,
+        output_format: mimeType,
+        processing_mode: 'advanced_clean',
+        quality: 'high'
+      }
+    })
   });
-  const { exp, sig } = await signR2Key(outputKey, env, 60 * 60);
-  const base = getWorkerBase(env, request);
-  return sig ? `${base}/audio/${encodeURIComponent(outputKey)}?exp=${exp}&sig=${sig}` : `${base}/audio/${encodeURIComponent(outputKey)}`;
-}
 
-throw new Error('RunPod processing incomplete or failed');
+  if (!response.ok) throw new Error(`RunPod audio processing failed: ${response.status}`);
+  const result = await response.json();
+  const out = result.output || {};
+
+  if (out.processed_audio_base64) {
+    const processedBuffer = Uint8Array.from(atob(out.processed_audio_base64), c => c.charCodeAt(0));
+    await env.AUDIO_STORAGE.put(outputKey, processedBuffer, {
+      httpMetadata: { contentType: mimeType, cacheControl: 'private, max-age=7200' },
+      customMetadata: {
+        processedBy: 'runpod',
+        profanityRemoved: String(profanityTimestamps.length),
+        processedAt: new Date().toISOString()
+      }
+    });
+    const { exp, sig } = await signR2Key(outputKey, env, 60 * 60);
+    const base = getWorkerBase(env, request);
+    return sig
+      ? `${base}/audio/${encodeURIComponent(outputKey)}?exp=${exp}&sig=${sig}`
+      : `${base}/audio/${encodeURIComponent(outputKey)}`;
+  }
+
+  throw new Error('RunPod processing incomplete or failed');
 }
 
 // ---------- Audio Processing Utilities ----------
@@ -1096,10 +1094,8 @@ async function verifySignedUrl(key, exp, sig, env) {
   const cryptoKey = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const signatureBuf = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
   const expected = [...new Uint8Array(signatureBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
-
   if (expected.length !== sig.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
+  let diff = 0; for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
   return diff === 0;
 }
 

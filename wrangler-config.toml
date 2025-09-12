@@ -1,50 +1,45 @@
-# Complete Wrangler Configuration for FWEA-I
-## Enhanced configuration with all necessary bindings for production deployment
-
-```toml
 name = "omnibackend2"
 main = "src/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
-
-# Worker configuration
+usage_model = "unbound"
 workers_dev = false
 route = { pattern = "omnibackend2.fweago-flavaz.workers.dev/*", zone_name = "fweago-flavaz.workers.dev" }
 
-# Usage model for compute-intensive operations
-usage_model = "unbound"
-
-# Environment variables (non-sensitive)
 [vars]
 FRONTEND_URL = "https://fwea-i.com"
 WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev"
 
-# AI binding for Cloudflare Workers AI
-[[ai]]
+[assets]
+directory = "./public"
+
+# --- Cloudflare AI binding
+[ai]
 binding = "AI"
 
-# R2 storage binding for audio files
+# --- R2 storage
 [[r2_buckets]]
 binding = "AUDIO_STORAGE"
 bucket_name = "fwea-audio-storage"
 
-# KV binding for profanity lists
+# --- KV namespace
 [[kv_namespaces]]
 binding = "PROFANITY_LISTS"
 id = "6a64a5d1cb7b4ac5bcaefaec65129a66"
 
-# D1 database binding for user data and analytics
+# --- D1 database
 [[d1_databases]]
 binding = "DB"
 database_name = "fwea-database"
-database_id = "your-d1-database-id-here"
+database_id = "e86cdc5e-9076-4076-a4e9-9f05591c3119"
 
-# Durable Object bindings
-[[durable_objects.bindings]]
-name = "PROCESSING_STATE"
-class_name = "ProcessingStateV2"
+# --- Durable Object
+[durable_objects]
+bindings = [
+  { name = "PROCESSING_STATE", class_name = "ProcessingStateV2" }
+]
 
-# Queue binding for background audio processing
+# --- Queues
 [[queues.producers]]
 binding = "TRANSCODE_QUEUE"
 queue = "audio-transcoding-queue"
@@ -54,16 +49,13 @@ queue = "audio-transcoding-queue"
 max_batch_size = 10
 max_batch_timeout = 30
 
-# Analytics and observability
 [observability]
 enabled = true
 head_sampling_rate = 1.0
 
-# Build configuration
 [build]
 command = "echo 'No build step required'"
 
-# Environment-specific configurations
 [env.production]
 name = "omnibackend2"
 vars = { FRONTEND_URL = "https://fwea-i.com", WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev" }
@@ -76,226 +68,29 @@ vars = { FRONTEND_URL = "https://staging.fwea-i.com", WORKER_BASE_URL = "https:/
 name = "omnibackend2-dev"
 vars = { FRONTEND_URL = "http://localhost:3000", WORKER_BASE_URL = "http://localhost:8787" }
 
-# Migration configuration for Durable Objects
 [[migrations]]
 tag = "v1"
 new_classes = ["ProcessingStateV2"]
 
-# Keep dashboard variables on deploy
 keep_vars = true
 
-# Additional configuration for complex deployments
 [placement]
 mode = "smart"
 
-# Limits and quotas
 [limits]
 cpu_ms = 30000
 
-# Error handling
 send_metrics = true
 
-# Custom domains (configure in dashboard)
-# Custom domain: payments.fwea-i.com -> Stripe integration
-# Custom domain: api.fwea-i.com -> Main API endpoint
-
-# Security headers
-[site]
-bucket = "dist"  # if using static assets
-
-# Performance optimizations
 [triggers]
-crons = ["0 0 * * *"]  # Daily cleanup cron
+crons = ["0 0 * * *"]
 
-# Service bindings for microservices architecture
 [[services]]
 binding = "TRANSCODER"
 service = "audio-transcoder-service"
 environment = "production"
 
-# WebSocket support for real-time updates
-websocket = true
-
-# Advanced configuration
-[[unsafe]]
+[unsafe]
 bindings = [
   { name = "EXTERNAL_API", type = "fetcher", object = "https://external-api.example.com" }
 ]
-```
-
-## Environment Variables to Set in Dashboard/CLI:
-
-### Required Secrets (set via wrangler secret put):
-- `STRIPE_SECRET_KEY` - Your Stripe secret key
-- `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook secret
-- `AUDIO_URL_SECRET` - Secret for signing audio URLs (generate random string)
-- `ADMIN_API_TOKEN` - Admin bypass token (generate random string)
-
-### Optional Secrets for Enhanced Functionality:
-- `RUNPOD_API_KEY` - RunPod API key for advanced audio processing
-- `RUNPOD_ENDPOINT_ID` - RunPod endpoint for transcription
-- `RUNPOD_AUDIO_ENDPOINT` - RunPod endpoint for audio processing
-- `TRANSCRIBE_ENDPOINT` - External transcription service URL
-- `TRANSCRIBE_TOKEN` - External transcription service token
-
-### Commands to Set Secrets:
-```bash
-# Core Stripe configuration
-wrangler secret put STRIPE_SECRET_KEY
-wrangler secret put STRIPE_WEBHOOK_SECRET
-
-# Audio security
-wrangler secret put AUDIO_URL_SECRET
-
-# Admin access
-wrangler secret put ADMIN_API_TOKEN
-
-# RunPod integration (optional)
-wrangler secret put RUNPOD_API_KEY
-wrangler secret put RUNPOD_ENDPOINT_ID
-wrangler secret put RUNPOD_AUDIO_ENDPOINT
-
-# External transcription (optional)
-wrangler secret put TRANSCRIBE_ENDPOINT
-wrangler secret put TRANSCRIBE_TOKEN
-```
-
-### KV Namespace Setup:
-Create profanity lists in KV storage with keys like:
-- `lists/en.json` - English profanity words array
-- `lists/es.json` - Spanish profanity words array
-- `lists/fr.json` - French profanity words array
-- etc. for all supported languages
-
-### D1 Database Schema:
-```sql
--- User subscriptions table
-CREATE TABLE user_subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    plan_type TEXT NOT NULL,
-    stripe_session_id TEXT,
-    stripe_subscription_id TEXT,
-    email TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER,
-    expires_at INTEGER,
-    is_active BOOLEAN DEFAULT 1
-);
-
--- Processing history table
-CREATE TABLE processing_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    process_id TEXT UNIQUE NOT NULL,
-    original_filename TEXT,
-    file_size INTEGER,
-    detected_languages TEXT, -- JSON array
-    words_removed INTEGER DEFAULT 0,
-    processing_time_ms INTEGER,
-    plan_type TEXT NOT NULL,
-    result TEXT, -- JSON object
-    created_at INTEGER NOT NULL,
-    status TEXT DEFAULT 'pending'
-);
-
--- Payment transactions table
-CREATE TABLE payment_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    stripe_session_id TEXT UNIQUE NOT NULL,
-    user_id TEXT NOT NULL,
-    plan_type TEXT NOT NULL,
-    amount INTEGER, -- in cents
-    currency TEXT DEFAULT 'usd',
-    status TEXT DEFAULT 'pending',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER
-);
-
--- Usage analytics table
-CREATE TABLE usage_analytics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    plan_type TEXT,
-    file_size INTEGER,
-    user_agent TEXT,
-    ip_address TEXT,
-    created_at INTEGER NOT NULL
-);
-
--- Verification codes table
-CREATE TABLE verification_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT NOT NULL,
-    code TEXT NOT NULL,
-    plan_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
-);
-
--- Create indexes for better performance
-CREATE INDEX idx_user_subscriptions_user_id ON user_subscriptions(user_id);
-CREATE INDEX idx_user_subscriptions_session_id ON user_subscriptions(stripe_session_id);
-CREATE INDEX idx_processing_history_user_id ON processing_history(user_id);
-CREATE INDEX idx_processing_history_process_id ON processing_history(process_id);
-CREATE INDEX idx_payment_transactions_session_id ON payment_transactions(stripe_session_id);
-CREATE INDEX idx_usage_analytics_user_id ON usage_analytics(user_id);
-CREATE INDEX idx_verification_codes_email ON verification_codes(email);
-```
-
-### R2 Bucket Setup:
-Create bucket with proper CORS configuration:
-```json
-{
-  "AllowedOrigins": [
-    "https://fwea-i.com",
-    "https://www.fwea-i.com",
-    "https://editor.wix.com",
-    "https://*.wixsite.com",
-    "http://localhost:3000"
-  ],
-  "AllowedMethods": ["GET", "POST", "PUT", "DELETE", "HEAD"],
-  "AllowedHeaders": ["*"],
-  "ExposeHeaders": ["ETag", "Content-Length", "Content-Range"],
-  "MaxAgeSeconds": 3600
-}
-```
-
-### Deployment Steps:
-1. Set all required secrets using wrangler secret put
-2. Create and populate KV namespace with profanity lists
-3. Set up D1 database with provided schema
-4. Create R2 bucket with CORS configuration
-5. Deploy with: `wrangler deploy`
-6. Test health endpoint: `curl https://your-worker.workers.dev/health`
-
-### GitHub Actions Workflow (.github/workflows/deploy.yml):
-```yaml
-name: Deploy FWEA-I Backend
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    name: Deploy
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-      - name: Install dependencies
-        run: npm install
-      - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --env production
-```

@@ -48,6 +48,7 @@ queue = "audio-transcoding-queue"
 
 [[queues.consumers]]
 queue = "audio-transcoding-queue"
+worker = "omnibackend2"
 max_batch_size = 10
 max_batch_timeout = 30
 

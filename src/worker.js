@@ -625,43 +625,37 @@ async function transcribeAudioEnhanced(audioBuffer, env) {
 }
 
 // RunPod transcription integration
-async function transcribeWithRunPod(audioBuffer, env) {
-    if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
-        throw new Error('RunPod not configured');
-    }
-
-    const response = await fetch(`https://api.runpod.ai/v2/${env.RUNPOD_ENDPOINT_ID}/runsync`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${env.RUNPOD_API_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            input: {
-                audio_base64: btoa(String.fromCharCode(...new Uint8Array(audioBuffer))),
-                model: 'large-v3',
-                transcription: 'segments',
-                language: 'auto',
-                return_timestamps: true,
-            }
-        })
-    });
-
-    if (!response.ok) {
-        throw new Error(`RunPod API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    
-    if (data.status === 'COMPLETED' && data.output) {
-        return {
-            text: data.output.transcription || '',
-            segments: data.output.segments || []
-        };
-    }
-
-    throw new Error('RunPod transcription failed');
+const apiUrl = (env.RUNPOD_API_URL || '').trim();
+const apiKey = (env.RUNPOD_API_KEY || '').trim();
+if (!apiUrl || !apiKey) {
+  throw new Error('RunPod not configured');
 }
+
+const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+const response = await fetch(apiUrl, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    input: {
+      audio_base64: b64,
+      model: 'large-v3',
+      transcription: 'segments',
+      language: 'auto',
+      return_timestamps: true
+    }
+  })
+});
+
+if (!response.ok) throw new Error(`RunPod API error: ${response.status}`);
+const data = await response.json();
+const output = data.output || data;
+return {
+  text: output.transcription || output.text || '',
+  segments: Array.isArray(output.segments) ? output.segments : []
+};
 
 // Cloudflare AI transcription
 async function transcribeWithCloudflareAI(audioBuffer, env) {
@@ -673,7 +667,7 @@ async function transcribeWithCloudflareAI(audioBuffer, env) {
     const processBuffer = audioBuffer.byteLength > maxSize ? 
         audioBuffer.slice(0, maxSize) : audioBuffer;
 
-    const response = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+    const response = await env.AI.run('@cf/openai/whisper', {
         audio: [...new Uint8Array(processBuffer)]
     });
 
@@ -843,7 +837,7 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
             // Use RunPod for advanced processing if available
             if (env.RUNPOD_API_KEY && profanityTimestamps.length > 0) {
                 try {
-                    fullAudioUrl = await processAudioWithRunPod(audioBuffer, profanityTimestamps, fullKey, env, safeMime);
+                    fullAudioUrl = await processAudioWithRunPod(audioBuffer, profanityTimestamps, fullKey, env, safeMime, request);
                 } catch (error) {
                     console.warn('RunPod processing failed, using local processing:', error.message);
                     // Fallback to local processing
@@ -888,59 +882,50 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
 }
 
 // ---------- RunPod Audio Processing ----------
-async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKey, env, mimeType) {
+async function processAudioWithRunPod(audioBuffer, profanityTimestamps, outputKey, env, mimeType, request) {
     if (!env.RUNPOD_AUDIO_ENDPOINT || !env.RUNPOD_API_KEY) {
         throw new Error('RunPod audio processing not configured');
     }
 
-    const response = await fetch(`https://api.runpod.ai/v2/${env.RUNPOD_AUDIO_ENDPOINT}/runsync`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${env.RUNPOD_API_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            input: {
-                audio_base64: btoa(String.fromCharCode(...new Uint8Array(audioBuffer))),
-                profanity_timestamps: profanityTimestamps,
-                output_format: mimeType,
-                processing_mode: 'advanced_clean',
-                quality: 'high'
-            }
-        })
-    });
+    const apiUrl = (env.RUNPOD_API_URL || '').trim();
+const apiKey = (env.RUNPOD_API_KEY || '').trim();
+if (!apiUrl || !apiKey) throw new Error('RunPod audio processing not configured');
 
-    if (!response.ok) {
-        throw new Error(`RunPod audio processing failed: ${response.status}`);
+const b64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+const response = await fetch(apiUrl, {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    input: {
+      audio_base64: b64,
+      profanity_timestamps: profanityTimestamps,
+      output_format: mimeType,
+      processing_mode: 'advanced_clean',
+      quality: 'high'
     }
+  })
+});
 
-    const result = await response.json();
-    
-    if (result.status === 'COMPLETED' && result.output?.processed_audio_base64) {
-        // Convert base64 back to buffer and store in R2
-        const processedBuffer = Uint8Array.from(atob(result.output.processed_audio_base64), c => c.charCodeAt(0));
-        
-        await env.AUDIO_STORAGE.put(outputKey, processedBuffer, {
-            httpMetadata: {
-                contentType: mimeType,
-                cacheControl: 'private, max-age=7200'
-            },
-            customMetadata: {
-                processedBy: 'runpod',
-                profanityRemoved: String(profanityTimestamps.length),
-                processedAt: new Date().toISOString()
-            }
-        });
+if (!response.ok) throw new Error(`RunPod audio processing failed: ${response.status}`);
+const result = await response.json();
+const out = result.output || {};
 
-        const { exp, sig } = await signR2Key(outputKey, env, 60 * 60);
-        const base = getWorkerBase(env, request);
-        
-        return sig ? 
-            `${base}/audio/${encodeURIComponent(outputKey)}?exp=${exp}&sig=${sig}` :
-            `${base}/audio/${encodeURIComponent(outputKey)}`;
+if (out.processed_audio_base64) {
+  const processedBuffer = Uint8Array.from(atob(out.processed_audio_base64), c => c.charCodeAt(0));
+  await env.AUDIO_STORAGE.put(outputKey, processedBuffer, {
+    httpMetadata: { contentType: mimeType, cacheControl: 'private, max-age=7200' },
+    customMetadata: {
+      processedBy: 'runpod',
+      profanityRemoved: String(profanityTimestamps.length),
+      processedAt: new Date().toISOString()
     }
+  });
+  const { exp, sig } = await signR2Key(outputKey, env, 60 * 60);
+  const base = getWorkerBase(env, request);
+  return sig ? `${base}/audio/${encodeURIComponent(outputKey)}?exp=${exp}&sig=${sig}` : `${base}/audio/${encodeURIComponent(outputKey)}`;
+}
 
-    throw new Error('RunPod processing incomplete or failed');
+throw new Error('RunPod processing incomplete or failed');
 }
 
 // ---------- Audio Processing Utilities ----------
@@ -957,7 +942,8 @@ async function createPreviewAudio(audioBuffer, durationSeconds, profanityTimesta
     }
 
     // Simple preview: take first N seconds
-    const estimatedBytesPerSecond = audioBuffer.byteLength / estimateAudioDuration(audioBuffer);
+    const dur = Math.max(1, estimateAudioDuration(audioBuffer));
+    const estimatedBytesPerSecond = audioBuffer.byteLength / dur;
     const previewBytes = Math.min(audioBuffer.byteLength, estimatedBytesPerSecond * durationSeconds);
     
     return audioBuffer.slice(0, previewBytes);
@@ -1071,33 +1057,50 @@ function getBitrateForPlan(plan) {
 }
 
 // ---------- Signing and Security ----------
+// ---------- Signing and Security ----------
 async function signR2Key(key, env, ttlSeconds = 15 * 60) {
-    if (!env.AUDIO_URL_SECRET) {
-        return { exp: 0, sig: '' }; // Development mode
-    }
+  if (!env.AUDIO_URL_SECRET) {
+    return { exp: 0, sig: '' }; // Development mode: unsigned links
+  }
 
-    const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-    const message = `${key}:${exp}`;
-    
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(env.AUDIO_URL_SECRET);
-    const msgData = encoder.encode(message);
-    
-    const cryptoKey = await crypto.subtle.importKey(
-        'raw',
-        keyData,
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign']
-    );
-    
-    const signature = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
-    const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=/g, '');
-        
-    return { exp, sig };
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const message = `${key}:${exp}`;
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(env.AUDIO_URL_SECRET);
+  const msgData = encoder.encode(message);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signatureBuf = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
+  const sig = [...new Uint8Array(signatureBuf)].map(b => b.toString(16).padStart(2, '0')).join(''); // hex
+  return { exp, sig };
+}
+
+async function verifySignedUrl(key, exp, sig, env) {
+  if (!env.AUDIO_URL_SECRET) return true; // dev mode
+  if (!key || !exp || !sig) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (Number(exp) <= now) return false;
+
+  const message = `${key}:${exp}`;
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(env.AUDIO_URL_SECRET);
+  const msgData = encoder.encode(message);
+  const cryptoKey = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signatureBuf = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
+  const expected = [...new Uint8Array(signatureBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
+
+  if (expected.length !== sig.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
+  return diff === 0;
 }
 
 // ---------- Additional Route Handlers ----------
@@ -1119,8 +1122,7 @@ async function handleDebugEnv(request, env, corsHeaders) {
             STRIPE_SECRET_KEY: Boolean(env.STRIPE_SECRET_KEY),
             STRIPE_WEBHOOK_SECRET: Boolean(env.STRIPE_WEBHOOK_SECRET),
             RUNPOD_API_KEY: Boolean(env.RUNPOD_API_KEY),
-            RUNPOD_ENDPOINT_ID: Boolean(env.RUNPOD_ENDPOINT_ID),
-            RUNPOD_AUDIO_ENDPOINT: Boolean(env.RUNPOD_AUDIO_ENDPOINT),
+            RUNPOD_API_URL: Boolean(env.RUNPOD_API_URL),
             TRANSCRIBE_ENDPOINT: Boolean(env.TRANSCRIBE_ENDPOINT),
             TRANSCRIBE_TOKEN: Boolean(env.TRANSCRIBE_TOKEN),
             FRONTEND_URL: env.FRONTEND_URL || null,
@@ -1267,10 +1269,84 @@ async function handleSubscriptionValidation(request, env, corsHeaders) {
 }
 
 async function handleAudioDownload(request, env, corsHeaders) {
-    // Implementation remains the same as in original file
-    return new Response(JSON.stringify({ message: 'Audio download endpoint' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  const url = new URL(request.url);
+  const key = decodeURIComponent(url.pathname.replace(/^\/audio\//, ''));
+  if (!key) return new Response('Bad Request', { status: 400, headers: corsHeaders });
+
+  if (!env.AUDIO_STORAGE) {
+    return new Response(JSON.stringify({ error: 'Storage not configured' }), {
+      status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
+  }
+
+  const exp = url.searchParams.get('exp');
+  const sig = url.searchParams.get('sig');
+  const ok = await verifySignedUrl(key, exp, sig, env);
+  if (!ok) {
+    return new Response(JSON.stringify({ error: 'Invalid or expired link' }), {
+      status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  const rangeHeader = request.headers.get('Range');
+  let r2Obj;
+  if (rangeHeader) {
+    const r = parseRangeHeader(rangeHeader);
+    if (r && r.start >= 0) {
+      r2Obj = await env.AUDIO_STORAGE.get(key, {
+        range: r.end != null ? { offset: r.start, length: r.end - r.start + 1 } : { offset: r.start }
+      });
+    }
+  }
+  if (!r2Obj) r2Obj = await env.AUDIO_STORAGE.get(key);
+  if (!r2Obj) return new Response('Not found', { status: 404, headers: corsHeaders });
+
+  const meta = r2Obj?.customMetadata || {};
+  const isPartial = Boolean(r2Obj.range);
+  const size = r2Obj.size;
+  const mime = (r2Obj.httpMetadata && r2Obj.httpMetadata.contentType) || 'audio/mpeg';
+
+  const headers = {
+    ...corsHeaders,
+    'Content-Type': mime,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': key.startsWith('previews/') ? 'public, max-age=3600' : 'private, max-age=7200'
+  };
+  headers['Access-Control-Expose-Headers'] =
+    (headers['Access-Control-Expose-Headers'] || 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified') +
+    ', X-Preview-Limit-Ms, X-Profanity';
+
+  if (meta && meta.previewMs) headers['X-Preview-Limit-Ms'] = meta.previewMs;
+  if (meta && meta.profanityCount) headers['X-Profanity'] = meta.profanityCount;
+
+  const etag = r2Obj?.httpEtag || r2Obj?.etag || null;
+  if (etag) headers['ETag'] = etag;
+  const lastMod = r2Obj?.uploaded || r2Obj?.httpMetadata?.lastModified || null;
+  if (lastMod) headers['Last-Modified'] = new Date(lastMod).toUTCString();
+  headers['Content-Disposition'] = key.startsWith('previews/') ? 'inline; filename="preview.mp3"' : 'inline; filename="full.mp3"';
+  if (!headers['Content-Type'] || !String(headers['Content-Type']).startsWith('audio/')) headers['Content-Type'] = 'audio/mpeg';
+
+  if (isPartial) {
+    const start = r2Obj.range.offset;
+    const length = r2Obj.range.length;
+    const end = start + length - 1;
+    headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    headers['Content-Length'] = String(length);
+    return new Response(r2Obj.body, { status: 206, headers });
+  } else {
+    headers['Content-Length'] = String(size);
+    return new Response(r2Obj.body, { status: 200, headers });
+  }
+}
+
+// keep or add if missing
+function parseRangeHeader(rangeHeader) {
+  if (!rangeHeader || !rangeHeader.startsWith('bytes=')) return null;
+  const [startStr, endStr] = rangeHeader.substring(6).split('-', 2);
+  const start = startStr ? parseInt(startStr, 10) : NaN;
+  const end = endStr ? parseInt(endStr, 10) : NaN;
+  if (Number.isNaN(start) && Number.isNaN(end)) return null;
+  return { start: Number.isNaN(start) ? 0 : start, end: Number.isNaN(end) ? null : end };
 }
 
 // Placeholder for additional functions

@@ -399,6 +399,12 @@ export default {
                     return await handleHealthCheck(request, env, corsHeaders);
                 case '/debug-env':
                     return await handleDebugEnv(request, env, corsHeaders);
+                case '/prices':
+                    return await handlePrices(request, env, corsHeaders);
+                case '/admin-login':
+                    return await handleAdminLogin(request, env, corsHeaders);
+                case '/admin-logout':
+                    return await handleAdminLogout(request, env, corsHeaders);
                 default:
                     return new Response(JSON.stringify({ 
                         error: 'Not Found', 
@@ -1214,6 +1220,94 @@ async function handleDebugEnv(request, env, corsHeaders) {
     return new Response(JSON.stringify(debug, null, 2), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
+}
+
+// ---------- Prices and Admin Auth ----------
+async function handlePrices(request, env, corsHeaders) {
+  try {
+    const map = buildPriceMapFromEnv(env);
+    const payload = {
+      prices: map,
+      // Advertise which plans are subscriptions so the UI can choose Checkout mode
+      subscriptions: {
+        dj_pro: true,
+        studio_elite: true,
+        single_track: false,
+        day_pass: false,
+      }
+    };
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message || String(e) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+// Lightweight admin login via header, body, or query token; sets HttpOnly cookie
+async function handleAdminLogin(request, env, corsHeaders) {
+  try {
+    const token = env.ADMIN_API_TOKEN || '';
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'ADMIN_API_TOKEN not set' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    let provided = '';
+    // 1) Header `X-FWEA-Admin` or `Authorization: Bearer ...`
+    provided = request.headers.get('X-FWEA-Admin') || '';
+    if (!provided) {
+      const auth = request.headers.get('Authorization') || '';
+      provided = auth.replace(/^Bearer\s+/i, '');
+    }
+
+    // 2) JSON body { token }
+    if (!provided && request.method === 'POST') {
+      try {
+        const b = await request.clone().json();
+        provided = (b && (b.token || b.adminToken)) || '';
+      } catch {}
+    }
+
+    // 3) Query `?token=`
+    if (!provided) {
+      const u = new URL(request.url);
+      provided = u.searchParams.get('token') || '';
+    }
+
+    if (provided !== token) {
+      return new Response(JSON.stringify({ ok: false, error: 'Invalid token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    const cookie = makeCookie('fwea_admin', '1', { maxAge: 60 * 60 * 6, path: '/', secure: true, httpOnly: true, sameSite: 'None' });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Set-Cookie': cookie }
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, error: e.message || String(e) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function handleAdminLogout(request, env, corsHeaders) {
+  // Invalidate the cookie immediately
+  const cookie = makeCookie('fwea_admin', '0', { maxAge: 0, path: '/', secure: true, httpOnly: true, sameSite: 'None' });
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Set-Cookie': cookie }
+  });
 }
 
 // Placeholder implementations for other handlers

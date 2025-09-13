@@ -805,6 +805,7 @@
 
 
     <!-- Stripe Integration -->
+    <link rel="preconnect" href="https://js.stripe.com" crossorigin>
     <script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
@@ -1044,7 +1045,7 @@
     <script>
         // Configuration with enhanced error handling
         const CONFIG = {
-            API_BASE: 'https://omnibackend2.fweago-flavaz.workers.dev',
+            API_BASE: (document.querySelector('meta[name="worker-base"]')?.content || 'https://omnibackend2.fweago-flavaz.workers.dev'),
             MAX_FILE_SIZE: {
                 free: 50 * 1024 * 1024,      // 50MB
                 single_track: 100 * 1024 * 1024,  // 100MB
@@ -1061,6 +1062,10 @@
             STRIPE_PRICE_IDS: {},
             ADMIN_HEADER: null // token is managed via UI/localStorage
         };
+
+        function _meta(name){
+          try { return document.querySelector(`meta[name="${name}"]`)?.content || null; } catch { return null; }
+        }
 
         // Enhanced State Management
         class AppState {
@@ -1143,6 +1148,7 @@
             try {
                 // Initialize Stripe
                 stripe = Stripe('pk_live_51RW06LJ2Iq1764pCr02p7yLia0VqBgUcRfG7Qm5OWFNAwFZcexIs9iBB3B9s22elcQzQjuAUMBxpeUhwcm8hsDf900NbCbF3Vw'); // Replace with your publishable key
+                if (!stripe) console.warn('Stripe failed to initialize. Check publishable key.');
                 
                 // Check if running in Wix
                 if (window.parent !== window) {
@@ -1343,13 +1349,57 @@
             }
         }
 
+        async function uploadWithProgress(url, formData, headers = {}, onProgress) {
+          return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            for (const [k, v] of Object.entries(headers || {})) xhr.setRequestHeader(k, v);
+            xhr.responseType = 'json';
+            xhr.upload.onprogress = (e) => {
+              if (!e.lengthComputable) return;
+              const pct = Math.max(0, Math.min(100, (e.loaded / e.total) * 20)); // 0–20% for upload stage
+              if (typeof onProgress === 'function') onProgress(pct, 'Uploading audio file...');
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(xhr.response || {});
+              } else {
+                const msg = (xhr.response && (xhr.response.error || xhr.response.details)) || `Upload failed (${xhr.status})`;
+                reject(new Error(msg));
+              }
+            };
+            xhr.onerror = () => reject(new Error('Network error while uploading'));
+            xhr.send(formData);
+          });
+        }
+
+        function resetProgressUI() {
+            const bar = document.getElementById('progressBar');
+            const txt = document.getElementById('progressText');
+            const status = document.getElementById('processingStatus');
+            const steps = [
+                document.getElementById('step1'),
+                document.getElementById('step2'),
+                document.getElementById('step3'),
+                document.getElementById('step4'),
+                document.getElementById('step5'),
+            ];
+            if (bar) bar.style.width = '0%';
+            if (txt) txt.textContent = '0% - Preparing upload...';
+            if (status) status.textContent = 'Preparing upload...';
+            steps.forEach(s => s && s.classList.remove('active','completed'));
+        }
+
         // Enhanced Audio Processing
         async function processAudioFile(file) {
             if (appState.isProcessing) return;
-            
-            appState.isProcessing = true;
+            // Reset and reveal processing UI immediately
+            resetProgressUI();
             appState.showSection('processing');
-            document.getElementById('processingSection').style.display = 'block';
+            const procEl = document.getElementById('processingSection');
+            if (procEl) procEl.style.display = 'block';
+            document.getElementById('progressBar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            appState.isProcessing = true;
 
             try {
                 // Create FormData
@@ -1367,16 +1417,12 @@
                 updateProgress(0, 'Uploading audio file...');
                 animateProcessingSteps();
 
-                // Make API request
-                const response = await fetch(`${CONFIG.API_BASE}/process-audio`, {
-                    method: 'POST',
-                    body: formData,
-                    headers
+                // Use XHR to get real upload progress (first 0–20%), then continue with polling
+                const result = await uploadWithProgress(`${CONFIG.API_BASE}/process-audio`, formData, headers, (pct, label) => {
+                  updateProgress(pct, label);
                 });
 
-                const result = await response.json();
-
-                if (response.ok && result.success) {
+                if (result && result.success) {
                     // If the backend returns an immediate result, finish; otherwise poll by processId
                     if (result.fullAudioUrl || result.previewUrl) {
                         appState.processingResult = result;
@@ -1387,7 +1433,7 @@
                         throw new Error('Processing started, but no tracking id returned');
                     }
                 } else {
-                    throw new Error(result.error || result.details || 'Processing failed');
+                    throw new Error((result && (result.error || result.details)) || 'Processing failed');
                 }
 
             } catch (error) {
@@ -1402,7 +1448,10 @@
             let done = false; let tries = 0;
             while (!done && tries < 600) { // up to ~15 minutes
                 try {
-                    const resp = await fetch(`${CONFIG.API_BASE}/status?pid=${encodeURIComponent(processId)}`);
+                    let statusUrl = new URL(`${CONFIG.API_BASE}/status`);
+                    statusUrl.searchParams.set('pid', processId);
+                    statusUrl.searchParams.set('id', processId);
+                    const resp = await fetch(statusUrl.toString());
                     const data = await resp.json();
                     if (data.error) throw new Error(data.error);
                     if (typeof data.progress === 'number') {
@@ -1617,16 +1666,16 @@
 
         // Plan Selection and Stripe Integration
         async function selectPlan(planType) {
-            if (!appState.processingResult && planType !== 'free') {
-                showAlert('Please upload and process an audio file first.', 'warning');
-                return;
-            }
+            // Removed guard that prevents checkout when no processingResult
 
             try {
                 appState.currentPlan = planType;
+                const activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
+                if (activeBtn) { activeBtn.disabled = true; activeBtn.style.opacity = '0.6'; }
 
                 if (planType === 'free') {
                     showAlert('You are using the free plan with 30-second previews.', 'success');
+                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     return;
                 }
 
@@ -1637,6 +1686,7 @@
                 const priceId = CONFIG.STRIPE_PRICE_IDS[planType];
                 if (!priceId) {
                     showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
+                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     return;
                 }
 
@@ -1658,14 +1708,18 @@
                 
                 if (result.success && result.url) {
                     // Redirect to Stripe Checkout
+                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     window.location.href = result.url;
                 } else {
+                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     throw new Error(result.error || 'Failed to create payment session');
                 }
 
             } catch (error) {
                 console.error('Plan selection error:', error);
                 showAlert('Failed to process payment. Please try again.', 'error');
+                const activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
+                if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
             }
         }
 

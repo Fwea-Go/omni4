@@ -746,63 +746,63 @@
         .wix-embed .header h1 {
             font-size: clamp(2rem, 4vw, 3rem);
         }
+    /* Admin Bar */
+    .admin-bar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(10,10,10,0.9);
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid var(--border-color);
+        padding: 10px 0;
+    }
+    .admin-inner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        justify-content: flex-end;
+    }
+    .admin-badge {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        background: var(--background-card);
+        border: 1px solid var(--border-color);
+        padding: 6px 10px;
+        border-radius: 999px;
+    }
+    .admin-input {
+        background: var(--background-hover);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        padding: 8px 10px;
+        border-radius: 8px;
+        min-width: 240px;
+    }
+    .admin-btn {
+        background: var(--gradient-primary);
+        color: white;
+        border: none;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .admin-btn.secondary {
+        background: var(--background-hover);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+    .admin-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .admin-toggle input { accent-color: #00D4FF; }
+    .admin-hidden { display: none; }
     </style>
 
-        /* Admin Bar */
-        .admin-bar {
-            position: sticky;
-            top: 0;
-            z-index: 50;
-            background: rgba(10,10,10,0.9);
-            backdrop-filter: blur(6px);
-            border-bottom: 1px solid var(--border-color);
-            padding: 10px 0;
-        }
-        .admin-inner {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            justify-content: flex-end;
-        }
-        .admin-badge {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            background: var(--background-card);
-            border: 1px solid var(--border-color);
-            padding: 6px 10px;
-            border-radius: 999px;
-        }
-        .admin-input {
-            background: var(--background-hover);
-            border: 1px solid var(--border-color);
-            color: var(--text-primary);
-            padding: 8px 10px;
-            border-radius: 8px;
-            min-width: 240px;
-        }
-        .admin-btn {
-            background: var(--gradient-primary);
-            color: white;
-            border: none;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-        .admin-btn.secondary {
-            background: var(--background-hover);
-            color: var(--text-primary);
-            border: 1px solid var(--border-color);
-        }
-        .admin-toggle {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
-            user-select: none;
-        }
-        .admin-toggle input { accent-color: #00D4FF; }
-        .admin-hidden { display: none; }
 
     <!-- Stripe Integration -->
     <script src="https://js.stripe.com/v3/"></script>

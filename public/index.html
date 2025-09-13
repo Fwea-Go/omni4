@@ -748,10 +748,79 @@
         }
     </style>
 
+        /* Admin Bar */
+        .admin-bar {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: rgba(10,10,10,0.9);
+            backdrop-filter: blur(6px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 10px 0;
+        }
+        .admin-inner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+        .admin-badge {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            background: var(--background-card);
+            border: 1px solid var(--border-color);
+            padding: 6px 10px;
+            border-radius: 999px;
+        }
+        .admin-input {
+            background: var(--background-hover);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 10px;
+            border-radius: 8px;
+            min-width: 240px;
+        }
+        .admin-btn {
+            background: var(--gradient-primary);
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .admin-btn.secondary {
+            background: var(--background-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        .admin-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .admin-toggle input { accent-color: #00D4FF; }
+        .admin-hidden { display: none; }
+
     <!-- Stripe Integration -->
     <script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
+    <!-- Admin Bar -->
+    <div class="admin-bar">
+      <div class="container admin-inner">
+        <span id="adminStatusBadge" class="admin-badge">Admin: Signed Out</span>
+        <label class="admin-toggle">
+          <input type="checkbox" id="adminToggle">
+          <span>Enable Admin</span>
+        </label>
+        <input type="password" id="adminTokenInput" class="admin-input admin-hidden" placeholder="Enter admin token" autocomplete="off">
+        <button id="adminSignInBtn" class="admin-btn admin-hidden">Sign In</button>
+        <button id="adminSignOutBtn" class="admin-btn secondary admin-hidden">Sign Out</button>
+      </div>
+    </div>
     <!-- Header Section -->
     <header class="header">
         <div class="container">
@@ -994,7 +1063,7 @@
                 studio_elite: 'price_1S4Nr3J2Iq1764pCzHY4zIWr',
                 day_pass: 'price_1S4NsTJ2Iq1764pCCbru0Aao'
             },
-            ADMIN_HEADER: 'FWEA.IP' // Set this to your admin token
+            ADMIN_HEADER: null // token is managed via UI/localStorage
         };
 
         // Enhanced State Management
@@ -1043,6 +1112,30 @@
         const appState = new AppState();
         let stripe;
 
+        // --- Admin helpers ---
+        function getAdminToken() {
+            try { return localStorage.getItem('FWEA_ADMIN_TOKEN'); } catch { return null; }
+        }
+        function setAdminToken(token) {
+            try { token ? localStorage.setItem('FWEA_ADMIN_TOKEN', token) : localStorage.removeItem('FWEA_ADMIN_TOKEN'); } catch {}
+            CONFIG.ADMIN_HEADER = token || null;
+            appState.isAdmin = !!token;
+            updateAdminUI();
+        }
+        function updateAdminUI() {
+            const badge = document.getElementById('adminStatusBadge');
+            const toggle = document.getElementById('adminToggle');
+            const input  = document.getElementById('adminTokenInput');
+            const btnIn  = document.getElementById('adminSignInBtn');
+            const btnOut = document.getElementById('adminSignOutBtn');
+            const hasTok = !!getAdminToken();
+            if (badge) badge.textContent = hasTok ? 'Admin: Signed In' : 'Admin: Signed Out';
+            if (toggle) toggle.checked = hasTok;
+            if (input) input.classList.toggle('admin-hidden', hasTok);
+            if (btnIn) btnIn.classList.toggle('admin-hidden', hasTok);
+            if (btnOut) btnOut.classList.toggle('admin-hidden', !hasTok);
+        }
+
         // Enhanced Initialization
         document.addEventListener('DOMContentLoaded', async function() {
             try {
@@ -1056,6 +1149,12 @@
 
                 // Setup event listeners
                 setupEventListeners();
+
+                // Initialize admin token from storage
+                const saved = getAdminToken();
+                if (saved) { CONFIG.ADMIN_HEADER = saved; appState.isAdmin = true; }
+                initAdminBarListeners();
+                updateAdminUI();
                 
                 // Check admin status
                 checkAdminStatus();
@@ -1120,6 +1219,46 @@
             });
         }
 
+        // Admin bar listeners
+        function initAdminBarListeners() {
+            const adminToggle = document.getElementById('adminToggle');
+            const tokenInput = document.getElementById('adminTokenInput');
+            const signInBtn = document.getElementById('adminSignInBtn');
+            const signOutBtn = document.getElementById('adminSignOutBtn');
+
+            if (adminToggle) {
+                adminToggle.addEventListener('change', () => {
+                    const enabled = adminToggle.checked;
+                    if (enabled) {
+                        tokenInput.classList.remove('admin-hidden');
+                        signInBtn.classList.remove('admin-hidden');
+                        tokenInput.focus();
+                    } else {
+                        setAdminToken(null);
+                        tokenInput.classList.add('admin-hidden');
+                        signInBtn.classList.add('admin-hidden');
+                    }
+                });
+            }
+
+            if (signInBtn && tokenInput) {
+                signInBtn.addEventListener('click', () => {
+                    const tok = tokenInput.value.trim();
+                    if (!tok) return showAlert('Please enter an admin token.', 'warning');
+                    setAdminToken(tok);
+                    tokenInput.value = '';
+                    showAlert('Admin signed in.', 'success');
+                });
+            }
+
+            if (signOutBtn) {
+                signOutBtn.addEventListener('click', () => {
+                    setAdminToken(null);
+                    showAlert('Admin signed out.', 'info');
+                });
+            }
+        }
+
         // File Selection Handler
         function handleFileSelect(event) {
             const files = Array.from(event.target.files);
@@ -1175,9 +1314,8 @@
 
                 // Setup request headers
                 const headers = {};
-                if (appState.isAdmin) {
-                    headers['X-FWEA-Admin'] = CONFIG.ADMIN_HEADER;
-                }
+                const adminTok = getAdminToken();
+                if (adminTok) headers['X-FWEA-Admin'] = adminTok;
 
                 // Start progress animation
                 updateProgress(0, 'Uploading audio file...');
@@ -1565,6 +1703,26 @@
         // Initialize URL parameter handling
         document.addEventListener('DOMContentLoaded', handleUrlParameters);
 
+        // Stripe Checkout helper for unlocking downloads/upgrades.
+        if (typeof startCheckout !== 'function') {
+            async function startCheckout(type, fileName, email) {
+                try {
+                    const priceId = CONFIG.STRIPE_PRICE_IDS[type];
+                    if (!priceId) return showAlert('Invalid plan type selected.', 'error');
+                    const resp = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ priceId, type, fileName, email, fingerprint: appState.userFingerprint })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.success) throw new Error(data.error || 'Checkout failed');
+                    window.location.href = data.url;
+                } catch (e) {
+                    showAlert(e.message || 'Checkout failed', 'error');
+                }
+            }
+        }
+
         // Export functions for global access
         window.FWEAI = {
             selectPlan,
@@ -1582,27 +1740,3 @@
     <meta name="referrer" content="origin-when-cross-origin">
 </body>
 </html>
-```
-
-        // Ensure startCheckout exists
-        if (typeof startCheckout !== 'function') {
-        /**
-         * Stripe Checkout helper for unlocking downloads/upgrades.
-         */
-        async function startCheckout(type, fileName, email) {
-            try {
-                const priceId = CONFIG.STRIPE_PRICE_IDS[type];
-                if (!priceId) return showAlert('Invalid plan type selected.', 'error');
-                const resp = await fetch(`${CONFIG.API_BASE}/create-payment`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ priceId, type, fileName, email, fingerprint: appState.userFingerprint })
-                });
-                const data = await resp.json();
-                if (!resp.ok || !data.success) throw new Error(data.error || 'Checkout failed');
-                window.location.href = data.url; // Stripe-hosted checkout
-            } catch (e) {
-                showAlert(e.message || 'Checkout failed', 'error');
-            }
-        }
-        }

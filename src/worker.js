@@ -385,6 +385,8 @@ export default {
                     return await handleAccessActivation(request, env, corsHeaders);
                 case '/validate-subscription':
                     return await handleSubscriptionValidation(request, env, corsHeaders);
+                case '/grant-access':
+                    return await handleGrantAccess(request, env, corsHeaders);
                 case '/track-event':
                     return await handleTrackEvent(request, env, corsHeaders);
                 case '/status':
@@ -1044,11 +1046,13 @@ function estimateAudioDuration(audioBuffer) {
 function isAdminRequest(request, env) {
     try {
         const adminHeader = request.headers.get('X-FWEA-Admin') || '';
+        const auth = request.headers.get('Authorization') || '';
+        const bearer = auth.replace(/^Bearer\s+/i, '').trim();
         const adminToken = env.ADMIN_API_TOKEN || '';
-        
-        if (!adminHeader || !adminToken) return false;
-        
-        return adminHeader === adminToken;
+        if (!adminToken) return false;
+        if (adminHeader && adminHeader === adminToken) return true;
+        if (bearer && bearer === adminToken) return true;
+        return false;
     } catch {
         return false;
     }
@@ -1186,6 +1190,14 @@ async function handlePaymentCreation(request, env, corsHeaders) {
 
   try {
     const { priceId, type, fileName, email, fingerprint } = await request.json();
+    // Admin bypass: if admin token present, skip Stripe and grant access
+    if (isAdminRequest(request, env)) {
+      const successUrl = `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id=ADMIN_BYPASS&admin=1`;
+      return new Response(JSON.stringify({ success: true, sessionId: 'ADMIN_BYPASS', url: successUrl }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
 
     if (!env.STRIPE_SECRET_KEY) {
       return new Response(JSON.stringify({ error: 'Missing STRIPE_SECRET_KEY' }), {
@@ -1302,6 +1314,32 @@ async function handleSubscriptionValidation(request, env, corsHeaders) {
     });
 }
 
+async function handleGrantAccess(request, env, corsHeaders) {
+    if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (!isAdminRequest(request, env)) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    try {
+        const { fingerprint, seconds = 86400 } = await request.json();
+        if (!fingerprint) {
+            return new Response(JSON.stringify({ error: 'Missing fingerprint' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        if (!env.PROCESSING_STATE) {
+            return new Response(JSON.stringify({ error: 'PROCESSING_STATE not bound' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        const id = env.PROCESSING_STATE.idFromName(fingerprint);
+        const stub = env.PROCESSING_STATE.get(id);
+        const key = 'access:' + fingerprint;
+        const record = { grantedUntil: Date.now() + Math.max(1, Number(seconds)) * 1000 };
+        await stub.fetch('https://state/progress', { method: 'PUT', body: JSON.stringify({ key, value: record }) });
+        return new Response(JSON.stringify({ ok: true, fingerprint, grantedUntil: record.grantedUntil }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    } catch (e) {
+        return new Response(JSON.stringify({ error: e.message || String(e) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+}
+
 async function handleAudioDownload(request, env, corsHeaders) {
   const url = new URL(request.url);
   const key = decodeURIComponent(url.pathname.replace(/^\/audio\//, ''));
@@ -1396,7 +1434,22 @@ function parseRangeHeader(rangeHeader) {
 
 // Placeholder for additional functions
 async function validateUserAccess(fingerprint, planType, env) {
-    return { valid: true, reason: 'valid' };
+    try {
+        if (!env.PROCESSING_STATE) return { valid: true, reason: 'no_state' };
+        const id = env.PROCESSING_STATE.idFromName(fingerprint || 'anon');
+        const stub = env.PROCESSING_STATE.get(id);
+        const r = await stub.fetch(`https://state/progress?key=${encodeURIComponent('access:' + (fingerprint || 'anon'))}`);
+        const txt = await r.text();
+        if (!txt || txt === 'null') return { valid: true, reason: 'default' };
+        const record = JSON.parse(txt);
+        const now = Date.now();
+        if (record && Number(record.grantedUntil) > now) {
+            return { valid: true, reason: 'granted' };
+        }
+        return { valid: true, reason: 'expired_or_default' };
+    } catch {
+        return { valid: true, reason: 'fallback' };
+    }
 }
 
 async function storeProcessingResult(fingerprint, result, env, planType) {
@@ -1484,12 +1537,12 @@ async function enqueueExternalEncodeJob(env, {
   }
 
   // Optional: relay via Queues if configured
-  if (env.TRANS CODE_QUEUE) {
-    await env.TRANS CODE_QUEUE.send(payload);
+  if (env.TRANS_CODE_QUEUE) {
+    await env.TRANS_CODE_QUEUE.send(payload);
     return true;
   }
 
-  throw new Error('No ENCODER_URL or TRANS CODE_QUEUE configured');
+  throw new Error('No ENCODER_URL or TRANS_CODE_QUEUE configured');
 }
 
 async function handleEncoderCallback(request, env, corsHeaders) {

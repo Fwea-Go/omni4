@@ -56,7 +56,7 @@ function sendJSON(res, status, obj) {
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization, x-encoder-token, x-admin-api-token');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization, x-encoder-token, x-fwea-encoder, x-admin-api-token');
   res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
   res.setHeader('Cache-Control', 'no-store');
 }
@@ -72,8 +72,9 @@ function ffmpegExists() {
 function requireAuth(req) {
   if (!ENCODER_TOKEN) return true; // auth disabled
   const auth = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-  const xTok = (req.headers['x-encoder-token'] || '').trim();
-  const tok = auth || xTok;
+  const xTok1 = (req.headers['x-encoder-token'] || '').trim();
+  const xTok2 = (req.headers['x-fwea-encoder'] || '').trim();
+  const tok = auth || xTok1 || xTok2;
   return tok && tok === ENCODER_TOKEN;
 }
 

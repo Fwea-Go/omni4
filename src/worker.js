@@ -832,6 +832,9 @@ async function findProfanityTimestampsEnhanced(transcription, languages, env) {
 // ---------- Enhanced Audio Output Generation (No RunPod, WAV for cleaned outputs) ----------
 async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, planType, previewDuration, fingerprint, env, mimeType, originalName, request, processId) {
   const base = getWorkerBase(env, request);
+
+  // Precompute a signed URL for the original so the encoder can fetch it synchronously for preview
+  const originalTmpKey = `uploads/${processId}.tmp`;
   
 
   // Determine source extension (for cases with no profanity)
@@ -851,9 +854,46 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
     customMetadata: { fingerprint, plan: planType, uploadedAt: new Date().toISOString() }
   });
 
+  // Signed URL for the encoder to fetch original
+  const { exp: oExp, sig: oSig } = await signR2Key(originalKey, env, 30 * 60);
+  const originalSignedUrl = oSig ? `${base}/audio/${encodeURIComponent(originalKey)}?exp=${oExp}&sig=${oSig}` : `${base}/audio/${encodeURIComponent(originalKey)}`;
+
   // 2) Generate preview (client gets this immediately)
   const previewKey = `previews/${processId}_preview.wav`;
-  const previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, 'audio/wav');
+  const windowEnd = Math.max(1, Math.floor(previewDuration));
+  const inWindow = (profanityTimestamps || []).filter(p => (p.start || 0) < windowEnd);
+
+  let previewAudio;
+  // If we have an encoder service and profanity is in the preview window, try a synchronous clean preview
+  if (env.ENCODER_URL && inWindow.length > 0) {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (env.ENCODER_TOKEN) {
+        headers['x-fwea-encoder'] = String(env.ENCODER_TOKEN);
+        headers['Authorization'] = `Bearer ${env.ENCODER_TOKEN}`;
+      }
+      const baseUrl = normalizeBaseUrl(String(env.ENCODER_URL || ''));
+      const url = `${baseUrl.replace(/\/+$/, '')}/encode`;
+      const body = {
+        sourceUrl: originalSignedUrl,
+        format: 'wav',
+        mode: 'mute',
+        segments: inWindow.map(s => ({ start: Math.max(0, Number(s.start)||0), end: Math.max( (Number(s.end)||((Number(s.start)||0)+0.5)), 0.01) })),
+        window: { start: 0, end: windowEnd },
+        returnInline: true
+      };
+      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!resp.ok) throw new Error(`encoder preview ${resp.status}`);
+      previewAudio = await resp.arrayBuffer();
+    } catch (e) {
+      // Fallback to Worker-side synthetic preview if encoder call fails
+      previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, 'audio/wav');
+    }
+  } else {
+    // No encoder or no profanity in window → synthetic preview
+    previewAudio = await createPreviewAudio(audioBuffer, previewDuration, profanityTimestamps, 'audio/wav');
+  }
+
   await env.AUDIO_STORAGE.put(previewKey, previewAudio, {
     httpMetadata: { contentType: 'audio/wav', cacheControl: 'public, max-age=3600' },
     customMetadata: {

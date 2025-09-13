@@ -1675,10 +1675,19 @@ async function enqueueExternalEncodeJob(env, {
   };
 
   if (env.ENCODER_URL) {
-    const url = `${String(env.ENCODER_URL).replace(/\/+$/,'')}/jobs/clean`;
+    const baseUrl = normalizeBaseUrl(String(env.ENCODER_URL || ''));
+    const url = `${baseUrl.replace(/\/+$/, '')}/jobs/clean`;
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (env.ENCODER_TOKEN) {
+      headers['x-fwea-encoder'] = String(env.ENCODER_TOKEN);
+      // keep Authorization for backwards compatibility
+      headers['Authorization'] = `Bearer ${env.ENCODER_TOKEN}`;
+    }
+
     const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(env.ENCODER_TOKEN ? { 'Authorization': `Bearer ${env.ENCODER_TOKEN}` } : {}) },
+      headers,
       body: JSON.stringify(payload)
     });
     if (!resp.ok) {
@@ -1694,6 +1703,14 @@ async function enqueueExternalEncodeJob(env, {
   }
 
   throw new Error('No ENCODER_URL or TRANS_CODE_QUEUE configured');
+}
+
+// Ensure base URLs include a protocol; default to http for plain IPs/hosts
+function normalizeBaseUrl(u = '') {
+  const s = String(u || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return `http://${s}`; // encoder VM is usually plain HTTP
 }
 
 async function handleEncoderCallback(request, env, corsHeaders) {

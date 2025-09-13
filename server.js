@@ -1,375 +1,465 @@
-// server.js (CommonJS)
-// FFmpeg encoder microservice for profanity muting/beeping.
-// Exposes:
-//  - GET  /health
-//  - POST /encode      { sourceUrl|fileBase64, format, mode, segments[], returnInline }
-//  - POST /jobs/clean  { input:{url}, output:{key}, format, profanityTimestamps[], callback }
+/**
+ * FWEA-I Audio Processing Server
+ * Advanced audio processing server for Hetzner VPS
+ * Handles heavy audio processing tasks from Cloudflare Workers
+ */
 
-const http = require('node:http');
-const { spawn, exec } = require('node:child_process');
-const { tmpdir } = require('node:os');
-const { mkdtemp, writeFile, readFile, rm } = require('node:fs').promises;
-const fs = require('node:fs');
-const { join } = require('node:path');
-const { randomUUID } = require('node:crypto');
-const AWS = require('aws-sdk');
+const express = require('express');
+const multer = require('multer');
+const ffmpeg = require('fluent-ffmpeg');
+const path = require('path');
+const fs = require('fs').promises;
+const crypto = require('crypto');
+const bodyParser = require('body-parser');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const cors = require('cors');
 
-// ---- ENV ----
-const ENCODER_TOKEN = process.env.ENCODER_TOKEN || '';
-const R2_ENDPOINT = process.env.R2_ENDPOINT || '';
-const R2_BUCKET   = process.env.R2_BUCKET || process.env.R2_BUCKET_NAME || '';
-const R2_KEY      = process.env.R2_ACCESS_KEY || process.env.R2_ACCESS_KEY_ID || '';
-const R2_SECRET   = process.env.R2_SECRET_KEY || process.env.R2_SECRET_ACCESS_KEY || '';
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Optional: add an admin token to include in callback requests back to the Worker
-const CALLBACK_ADMIN_TOKEN = process.env.CALLBACK_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || '';
-// Optional: identify this encoder in callbacks/logs
-const ENCODER_NAME = process.env.ENCODER_NAME || 'hetzner-cpx11';
-
-// S3 client (optional, only used for /jobs/clean)
-const s3 = (R2_ENDPOINT && R2_BUCKET && R2_KEY && R2_SECRET)
-  ? new AWS.S3({
-      endpoint: R2_ENDPOINT,
-      accessKeyId: R2_KEY,
-      secretAccessKey: R2_SECRET,
-      s3ForcePathStyle: true,
-      signatureVersion: 'v4',
-      region: 'auto',
-    })
-  : null;
-
-// Small fetch wrapper (Node 18+ has global fetch)
-async function fetchToBuffer(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Download failed: ${res.status} ${await res.text()}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
-function sendJSON(res, status, obj) {
-  const body = Buffer.from(JSON.stringify(obj));
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': body.length,
-  });
-  res.end(body);
-}
-
-function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization, x-encoder-token, x-fwea-encoder, x-admin-api-token, x-preview-limit-ms');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
-  res.setHeader('Cache-Control', 'no-store');
-}
-
-// Normalize, sort, merge, and clamp profanity segments to an optional time window
-function normalizeSegments(rawSegments, windowStart = 0, windowEnd = null) {
-  if (!Array.isArray(rawSegments) || rawSegments.length === 0) return [];
-  const segs = rawSegments
-    .map(s => ({
-      start: Math.max(0, Number(s.start)),
-      end: Math.max(0, Number(s.end))
-    }))
-    .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
-
-  // Clamp to window if provided
-  const clamped = segs.map(s => {
-    const st = Math.max(s.start, windowStart);
-    const en = windowEnd != null ? Math.min(s.end, windowEnd) : s.end;
-    return { start: st, end: en };
-  }).filter(s => s.end > s.start + 0.005); // at least 5ms
-
-  // Sort and merge overlaps
-  clamped.sort((a, b) => a.start - b.start);
-  const merged = [];
-  for (const s of clamped) {
-    if (!merged.length) { merged.push(s); continue; }
-    const last = merged[merged.length - 1];
-    if (s.start <= last.end + 0.002) {
-      last.end = Math.max(last.end, s.end);
-    } else {
-      merged.push(s);
+// Configuration
+const CONFIG = {
+    MAX_FILE_SIZE: 200 * 1024 * 1024, // 200MB
+    UPLOAD_PATH: './uploads',
+    PROCESSED_PATH: './processed',
+    TEMP_PATH: './temp',
+    SUPPORTED_FORMATS: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg'],
+    QUALITY_SETTINGS: {
+        single_track: { bitrate: '256k', sample: '44100' },
+        dj_pro: { bitrate: '320k', sample: '44100' },
+        studio_elite: { bitrate: '320k', sample: '48000' },
+        day_pass: { bitrate: '256k', sample: '44100' }
+    },
+    PREVIEW_LENGTHS: {
+        single_track: 30,
+        dj_pro: 30,
+        studio_elite: 60,
+        day_pass: 30
     }
-  }
-  return merged;
-}
+};
 
-// Build an FFmpeg audio filter for muting or beeping between time ranges (expects normalized segments).
-function buildAudioFilter(segments, mode) {
-  if (!segments?.length) return null;
+// Middleware
+app.use(helmet());
+app.use(cors({
+    origin: [
+        'https://omnibackend2.fweago-flavaz.workers.dev',
+        'https://*.workers.dev'
+    ],
+    credentials: true
+}));
 
-  // Build enable expression
-  const expr = segments.map(({ start, end }) => `between(t,${start.toFixed(3)},${end.toFixed(3)})`).join('+');
+// Rate limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests, please try again later.'
+});
+app.use('/api/', limiter);
 
-  if (mode === 'beep') {
-    // Generate a sine beep and gate it to the windows, then mix with original
-    const graph =
-      `[0:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo,` +
-      `alimiter=limit=0.95,` +
-      `anull[a0];` +
-      `sine=f=1000:sample_rate=48000,volume=0.0,volume=enable='${expr}':volume=0.8,` +
-      `afade=t=in:st=0:d=0.005,afade=t=out:st=0:d=0.005[beep];` +
-      `[a0][beep]amix=inputs=2:normalize=0[out]`;
-    return { graph, map: '[out]' };
-  }
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Default: mute inside windows; apply tiny fades on edges to avoid pops
-  const graph =
-    `aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo,` +
-    `volume=enable='${expr}':volume=0,` +
-    `afade=t=in:st=0:d=0.003,afade=t=out:st=0:d=0.003`;
-  return { graph, map: null };
-}
-
-async function handleEncode(req, res) {
-  if (!requireAuth(req)) return sendJSON(res, 401, { ok: false, error: 'unauthorized' });
-
-  try {
-    // Parse JSON body
-    const chunks = [];
-    for await (const ch of req) chunks.push(ch);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-
-    const {
-      sourceUrl,           // http(s) URL to audio
-      fileBase64,          // optional base64 audio if not using URL
-      format = 'mp3',      // 'mp3' | 'wav' | 'aac' | etc.
-      bitrate = '192k',    // used for mp3/aac
-      mode = 'mute',       // 'mute' | 'beep'
-      segments = [],       // [{start, end}, ...]
-      window,              // optional { start: number, end: number } to trim output (e.g., 0..30s preview)
-      returnInline = false // if true, Content-Type audio/* (no attachment)
-    } = body || {};
-
-    if (!await ffmpegExists()) {
-      return sendJSON(res, 500, { ok: false, error: 'ffmpeg_not_found' });
+// Storage configuration
+const storage = multer.diskStorage({
+    destination: async (req, file, cb) => {
+        await ensureDirectoryExists(CONFIG.UPLOAD_PATH);
+        cb(null, CONFIG.UPLOAD_PATH);
+    },
+    filename: (req, file, cb) => {
+        const uniqueName = crypto.randomUUID() + '_' + Date.now() + path.extname(file.originalname);
+        cb(null, uniqueName);
     }
-
-    if (!sourceUrl && !fileBase64) {
-      return sendJSON(res, 400, { ok: false, error: 'Provide sourceUrl or fileBase64' });
-    }
-    if (!Array.isArray(segments)) {
-      return sendJSON(res, 400, { ok: false, error: 'segments must be an array' });
-    }
-
-    // Temp workspace
-    const work = await mkdtemp(join(tmpdir(), 'encode-'));
-    const inPath  = join(work, 'in');
-    const outPath = join(work, `out.${format}`);
-
-    // Get input data
-    const inputBuf = sourceUrl
-      ? await fetchToBuffer(sourceUrl)
-      : Buffer.from(fileBase64, 'base64');
-    await writeFile(inPath, inputBuf);
-
-    // Determine output window (preview) if provided
-    const wStart = Math.max(0, Number(window?.start ?? 0));
-    const wEnd = Number.isFinite(Number(window?.end)) ? Math.max(0, Number(window.end)) : null;
-
-    // Normalize and clamp segments to the window
-    const normSegs = normalizeSegments(segments, wStart, wEnd);
-
-    const filter = buildAudioFilter(normSegs, mode);
-    const args = ['-y', '-i', inPath];
-    // Accurate trim after decoding (keeps filter times aligned)
-    if (wEnd != null) {
-      const dur = Math.max(0.01, wEnd - wStart);
-      args.push('-ss', String(wStart), '-t', String(dur));
-    } else if (wStart > 0) {
-      args.push('-ss', String(wStart));
-    }
-
-    // Normalize output format and quality
-    args.push('-ar', '48000', '-ac', '2');
-    if (filter) {
-      if (filter.map) {
-        args.push('-filter_complex', filter.graph, '-map', filter.map);
-      } else {
-        args.push('-af', filter.graph);
-      }
-    }
-
-    if (format === 'mp3') {
-      args.push('-c:a', 'libmp3lame', '-b:a', bitrate);
-    } else if (format === 'aac' || format === 'm4a') {
-      args.push('-c:a', 'aac', '-b:a', bitrate, '-movflags', '+faststart');
-    } else if (format === 'wav') {
-      args.push('-c:a', 'pcm_s16le');
-    } else {
-      // default sensible fallback
-      args.push('-c:a', 'libmp3lame', '-b:a', bitrate);
-    }
-
-    args.push(outPath);
-
-    const started = Date.now();
-    await new Promise((resolve, reject) => {
-      const p = spawn('ffmpeg', args);
-      let err = '';
-      p.stderr.on('data', d => { err += d.toString(); });
-      p.on('exit', code => code === 0 ? resolve() : reject(new Error(err || `ffmpeg exit ${code}`)));
-      p.on('error', reject);
-    });
-
-    const cleaned = await readFile(outPath);
-    rm(work, { recursive: true, force: true }).catch(() => {});
-
-    const filename = `cleaned_${randomUUID()}.${format}`;
-    const type = (format === 'wav') ? 'audio/wav'
-              : (format === 'mp3') ? 'audio/mpeg'
-              : (format === 'aac' || format === 'm4a') ? 'audio/aac'
-              : 'application/octet-stream';
-
-    res.writeHead(200, {
-      'Content-Type': returnInline ? type : 'application/octet-stream',
-      'Content-Disposition': returnInline ? 'inline' : `attachment; filename="${filename}"`,
-      'X-Encode-Duration-ms': String(Date.now() - started),
-    });
-    res.end(cleaned);
-  } catch (e) {
-    return sendJSON(res, 500, { ok: false, error: e.message || String(e) });
-  }
-}
-
-async function handleJobClean(req, res) {
-  if (!requireAuth(req)) return sendJSON(res, 401, { ok: false, error: 'unauthorized' });
-
-  try {
-    if (!s3) {
-      return sendJSON(res, 400, { ok: false, error: 'R2/S3 not configured on encoder' });
-    }
-
-    const chunks = [];
-    for await (const ch of req) chunks.push(ch);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) || {};
-
-    // Normalize payload shape (supports both our Worker and earlier examples)
-    const inputUrl = body.input?.url || body.inputUrl;
-    const outputKey = body.output?.key || body.outputKey;
-    const format = (body.format || 'wav').toLowerCase();
-    const wStart = Math.max(0, Number(body.window?.start ?? 0));
-    const wEnd = Number.isFinite(Number(body.window?.end)) ? Math.max(0, Number(body.window.end)) : null;
-    const rawSegments = Array.isArray(body.profanityTimestamps) ? body.profanityTimestamps : (body.segments || []);
-    const segments = normalizeSegments(rawSegments, wStart, wEnd);
-    const callback = body.callback || body.callbackUrl;
-    const processId = body.processId || body.jobId || null;
-
-    if (!inputUrl || !outputKey) {
-      return sendJSON(res, 400, { ok: false, error: 'missing input.url or output.key' });
-    }
-
-    // Temp workspace
-    const work = await mkdtemp(join(tmpdir(), 'job-'));
-    const inPath  = join(work, 'in');
-    const outPath = join(work, `out.${format}`);
-
-    const inputBuf = await fetchToBuffer(inputUrl);
-    await writeFile(inPath, inputBuf);
-
-    const filter = buildAudioFilter(segments, body.mode || 'mute');
-    const args = ['-y', '-i', inPath];
-    if (wEnd != null) {
-      const dur = Math.max(0.01, wEnd - wStart);
-      args.push('-ss', String(wStart), '-t', String(dur));
-    } else if (wStart > 0) {
-      args.push('-ss', String(wStart));
-    }
-    // Normalize output format and quality
-    args.push('-ar', '48000', '-ac', '2');
-    if (filter) {
-      if (filter.map) {
-        args.push('-filter_complex', filter.graph, '-map', filter.map);
-      } else {
-        args.push('-af', filter.graph);
-      }
-    }
-
-    if (format === 'mp3') {
-      args.push('-c:a', 'libmp3lame', '-b:a', '192k');
-    } else if (format === 'aac' || format === 'm4a') {
-      args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
-    } else if (format === 'wav') {
-      args.push('-c:a', 'pcm_s16le');
-    } else {
-      // default sensible fallback
-      args.push('-c:a', 'libmp3lame', '-b:a', '192k');
-    }
-
-    args.push(outPath);
-
-    await new Promise((resolve, reject) => {
-      const p = spawn('ffmpeg', args);
-      let err = '';
-      p.stderr.on('data', d => { err += d.toString(); });
-      p.on('exit', code => code === 0 ? resolve() : reject(new Error(err || `ffmpeg exit ${code}`)));
-      p.on('error', reject);
-    });
-
-    // Upload to R2
-    const bodyStream = fs.createReadStream(outPath);
-    await s3.upload({ Bucket: R2_BUCKET, Key: outputKey, Body: bodyStream }).promise();
-
-    // Cleanup
-    rm(work, { recursive: true, force: true }).catch(() => {});
-
-    // Callback Worker if provided
-    if (callback) {
-      try {
-        const cbHeaders = { 'Content-Type': 'application/json' };
-        if (CALLBACK_ADMIN_TOKEN) cbHeaders['x-admin-api-token'] = CALLBACK_ADMIN_TOKEN;
-        await fetch(callback, {
-          method: 'POST',
-          headers: cbHeaders,
-          body: JSON.stringify({ ok: true, outputKey, encoder: ENCODER_NAME, processId: processId || undefined })
-        });
-      } catch (_) {}
-    }
-
-    return sendJSON(res, 200, { ok: true, outputKey });
-  } catch (e) {
-    return sendJSON(res, 500, { ok: false, error: e.message || String(e) });
-  }
-}
-
-const server = http.createServer(async (req, res) => {
-  cors(res);
-  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
-
-  // Health
-  if (req.method === 'GET' && req.url && req.url.startsWith('/health')) {
-    const ff = await ffmpegExists().catch(() => false);
-    return sendJSON(res, 200, { ok: true, ffmpeg: !!ff, s3: !!s3 });
-  }
-
-  // Synchronous encode (returns file bytes)
-  if (req.method === 'POST' && req.url === '/encode') {
-    return handleEncode(req, res);
-  }
-
-  // Async job: read input from URL, upload to R2, call back
-  if (req.method === 'POST' && req.url === '/jobs/clean') {
-    return handleJobClean(req, res);
-  }
-
-  sendJSON(res, 404, { error: 'not_found' });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => console.log(`Encoder listening on 0.0.0.0:${PORT}`));
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: CONFIG.MAX_FILE_SIZE
+    },
+    fileFilter: (req, file, cb) => {
+        const extension = path.extname(file.originalname).toLowerCase().substring(1);
+        if (CONFIG.SUPPORTED_FORMATS.includes(extension)) {
+            cb(null, true);
+        } else {
+            cb(new Error(`Unsupported format: ${extension}`), false);
+        }
+    }
+});
 
-function ffmpegExists() {
-  return new Promise((resolve) => {
-    const p = spawn('ffmpeg', ['-version']);
-    p.on('error', () => resolve(false));
-    p.on('exit', (code) => resolve(code === 0));
-  });
+// Initialize directories
+async function initializeDirectories() {
+    try {
+        await ensureDirectoryExists(CONFIG.UPLOAD_PATH);
+        await ensureDirectoryExists(CONFIG.PROCESSED_PATH);
+        await ensureDirectoryExists(CONFIG.TEMP_PATH);
+        console.log('✅ Directories initialized');
+    } catch (error) {
+        console.error('❌ Failed to initialize directories:', error);
+        process.exit(1);
+    }
 }
 
-function requireAuth(req) {
-  if (!ENCODER_TOKEN) return true; // auth disabled
-  const auth = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-  const xTok1 = (req.headers['x-encoder-token'] || '').trim();
-  const xTok2 = (req.headers['x-fwea-encoder'] || '').trim();
-  const tok = auth || xTok1 || xTok2;
-  return tok && tok === ENCODER_TOKEN;
+async function ensureDirectoryExists(dirPath) {
+    try {
+        await fs.access(dirPath);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            await fs.mkdir(dirPath, { recursive: true });
+        } else {
+            throw error;
+        }
+    }
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        server: 'FWEA-I Audio Processing Server',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        loadAverage: require('os').loadavg()
+    });
+});
+
+// Audio processing endpoint
+app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
+    const processId = crypto.randomUUID();
+
+    try {
+        console.log(`Starting audio processing: ${processId}`);
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'No audio file provided' });
+        }
+
+        const { planType = 'single_track', profanityTimestamps = '[]' } = req.body;
+        const timestamps = JSON.parse(profanityTimestamps);
+
+        const inputPath = req.file.path;
+        const outputPath = path.join(CONFIG.PROCESSED_PATH, `cleaned_${processId}.mp3`);
+        const previewPath = path.join(CONFIG.PROCESSED_PATH, `preview_${processId}.mp3`);
+
+        // Get quality settings for plan
+        const qualitySettings = CONFIG.QUALITY_SETTINGS[planType] || CONFIG.QUALITY_SETTINGS.single_track;
+        const previewLength = CONFIG.PREVIEW_LENGTHS[planType] || 30;
+
+        // Process main audio file
+        const mainAudioBuffer = await processAudioFile(
+            inputPath, 
+            outputPath, 
+            timestamps, 
+            qualitySettings
+        );
+
+        // Generate preview
+        const previewBuffer = await generatePreview(
+            outputPath,
+            previewPath,
+            previewLength,
+            qualitySettings
+        );
+
+        // Get file information
+        const audioInfo = await getAudioInfo(outputPath);
+
+        // Clean up upload file
+        await fs.unlink(inputPath);
+
+        console.log(`Audio processing completed: ${processId}`);
+
+        res.json({
+            success: true,
+            processId,
+            files: {
+                cleaned: outputPath,
+                preview: previewPath
+            },
+            audioInfo,
+            processing: {
+                segmentsCleaned: timestamps.length,
+                qualityEnhanced: true,
+                formatOptimized: true
+            }
+        });
+
+    } catch (error) {
+        console.error(`Audio processing failed: ${processId}`, error);
+        res.status(500).json({
+            error: 'Audio processing failed',
+            processId,
+            details: error.message
+        });
+    }
+});
+
+// Download processed audio
+app.get('/api/download/:processId/:type', async (req, res) => {
+    try {
+        const { processId, type } = req.params;
+        const filename = type === 'preview' ? `preview_${processId}.mp3` : `cleaned_${processId}.mp3`;
+        const filePath = path.join(CONFIG.PROCESSED_PATH, filename);
+
+        // Check if file exists
+        try {
+            await fs.access(filePath);
+        } catch (error) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+
+        // Set appropriate headers
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        // Stream file
+        const fileStream = require('fs').createReadStream(filePath);
+        fileStream.pipe(res);
+
+        // Clean up file after sending (optional)
+        fileStream.on('end', async () => {
+            try {
+                // Keep files for 1 hour before cleanup
+                setTimeout(async () => {
+                    try {
+                        await fs.unlink(filePath);
+                        console.log(`Cleaned up file: ${filename}`);
+                    } catch (err) {
+                        console.warn(`Failed to cleanup ${filename}:`, err.message);
+                    }
+                }, 60 * 60 * 1000); // 1 hour
+            } catch (err) {
+                console.warn('Cleanup scheduling failed:', err.message);
+            }
+        });
+
+    } catch (error) {
+        console.error('Download failed:', error);
+        res.status(500).json({ error: 'Download failed' });
+    }
+});
+
+// Audio processing function
+async function processAudioFile(inputPath, outputPath, profanityTimestamps, qualitySettings) {
+    return new Promise((resolve, reject) => {
+        console.log(`Processing audio: ${inputPath} -> ${outputPath}`);
+
+        let ffmpegCommand = ffmpeg(inputPath)
+            .audioBitrate(qualitySettings.bitrate)
+            .audioFrequency(qualitySettings.sample)
+            .audioCodec('libmp3lame')
+            .format('mp3');
+
+        // Apply profanity filtering (mute segments)
+        if (profanityTimestamps.length > 0) {
+            console.log(`Applying ${profanityTimestamps.length} profanity filters`);
+
+            // Build complex filter for muting profanity segments
+            let filters = [];
+            let currentInput = '[0:a]';
+
+            profanityTimestamps.forEach((timestamp, index) => {
+                const startTime = Math.max(0, timestamp.timestamp - 0.5); // 0.5s buffer
+                const endTime = timestamp.timestamp + (timestamp.duration || 1.0);
+
+                filters.push({
+                    filter: 'volume',
+                    options: `enable='between(t,${startTime},${endTime})':volume=0`,
+                    inputs: currentInput,
+                    outputs: `[muted${index}]`
+                });
+                currentInput = `[muted${index}]`;
+            });
+
+            // Apply noise reduction and enhancement
+            filters.push({
+                filter: 'highpass',
+                options: 'f=80', // Remove low frequency noise
+                inputs: currentInput,
+                outputs: '[filtered]'
+            });
+
+            filters.push({
+                filter: 'compand',
+                options: 'attacks=0.3:decays=0.8:points=-80/-169|-54/-80|-49.5/-64.6|-41.1/-41.1|-25.8/-15|-10.8/-4.5|0/0|20/8.3',
+                inputs: '[filtered]',
+                outputs: '[compressed]'
+            });
+
+            ffmpegCommand = ffmpegCommand.complexFilter(filters, '[compressed]');
+        } else {
+            // Apply basic audio enhancement even without profanity
+            ffmpegCommand = ffmpegCommand
+                .audioFilters([
+                    'highpass=f=80',
+                    'compand=attacks=0.3:decays=0.8:points=-80/-169|-54/-80|-49.5/-64.6|-41.1/-41.1|-25.8/-15|-10.8/-4.5|0/0|20/8.3'
+                ]);
+        }
+
+        ffmpegCommand
+            .on('start', (commandLine) => {
+                console.log('FFmpeg process started:', commandLine);
+            })
+            .on('progress', (progress) => {
+                console.log(`Processing: ${Math.round(progress.percent || 0)}% done`);
+            })
+            .on('end', () => {
+                console.log('Audio processing completed');
+                resolve(outputPath);
+            })
+            .on('error', (err) => {
+                console.error('FFmpeg error:', err);
+                reject(err);
+            })
+            .save(outputPath);
+    });
+}
+
+// Generate preview from processed audio
+async function generatePreview(inputPath, outputPath, duration, qualitySettings) {
+    return new Promise((resolve, reject) => {
+        console.log(`Generating ${duration}s preview: ${outputPath}`);
+
+        ffmpeg(inputPath)
+            .seekInput(0) // Start from beginning
+            .duration(duration) // Limit duration
+            .audioBitrate(qualitySettings.bitrate)
+            .audioFrequency(qualitySettings.sample)
+            .audioCodec('libmp3lame')
+            .format('mp3')
+            .on('end', () => {
+                console.log('Preview generation completed');
+                resolve(outputPath);
+            })
+            .on('error', (err) => {
+                console.error('Preview generation error:', err);
+                reject(err);
+            })
+            .save(outputPath);
+    });
+}
+
+// Get audio file information
+async function getAudioInfo(filePath) {
+    return new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(filePath, (err, metadata) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            const audioStream = metadata.streams.find(stream => stream.codec_type === 'audio');
+            if (!audioStream) {
+                reject(new Error('No audio stream found'));
+                return;
+            }
+
+            resolve({
+                duration: parseFloat(metadata.format.duration),
+                bitrate: parseInt(metadata.format.bit_rate),
+                sampleRate: parseInt(audioStream.sample_rate),
+                channels: audioStream.channels,
+                codec: audioStream.codec_name,
+                size: parseInt(metadata.format.size)
+            });
+        });
+    });
+}
+
+// Cleanup old files periodically
+async function cleanupOldFiles() {
+    try {
+        const directories = [CONFIG.PROCESSED_PATH, CONFIG.UPLOAD_PATH, CONFIG.TEMP_PATH];
+        const maxAge = 4 * 60 * 60 * 1000; // 4 hours
+        const now = Date.now();
+
+        for (const dir of directories) {
+            try {
+                const files = await fs.readdir(dir);
+
+                for (const file of files) {
+                    const filePath = path.join(dir, file);
+                    const stats = await fs.stat(filePath);
+
+                    if (now - stats.mtime.getTime() > maxAge) {
+                        await fs.unlink(filePath);
+                        console.log(`Cleaned up old file: ${file}`);
+                    }
+                }
+            } catch (error) {
+                console.warn(`Failed to cleanup directory ${dir}:`, error.message);
+            }
+        }
+    } catch (error) {
+        console.error('Cleanup error:', error);
+    }
+}
+
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Server error:', error);
+
+    if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'File too large' });
+        }
+        return res.status(400).json({ error: error.message });
+    }
+
+    res.status(500).json({ error: 'Internal server error' });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    server.close(() => {
+        console.log('Process terminated');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    server.close(() => {
+        console.log('Process terminated');
+        process.exit(0);
+    });
+});
+
+// Start server
+async function startServer() {
+    try {
+        await initializeDirectories();
+
+        const server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 FWEA-I Audio Processing Server running on port ${PORT}`);
+            console.log(`🌐 Server accessible at http://178.156.190.229:${PORT}`);
+            console.log(`💾 Upload path: ${CONFIG.UPLOAD_PATH}`);
+            console.log(`🎵 Processed path: ${CONFIG.PROCESSED_PATH}`);
+        });
+
+        // Start cleanup routine
+        setInterval(cleanupOldFiles, 60 * 60 * 1000); // Run every hour
+
+        return server;
+
+    } catch (error) {
+        console.error('❌ Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+// Export for testing
+module.exports = { app, startServer };
+
+// Start server if run directly
+if (require.main === module) {
+    startServer();
 }

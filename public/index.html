@@ -1,7 +1,3 @@
-# Complete Updated HTML Frontend for FWEA-I
-## Enhanced UI/UX with better error handling, mobile responsiveness, and Wix embed optimization
-
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FWEA-I - Professional Audio Cleaning</title>
     <meta name="description" content="AI-powered audio cleaning in 100+ languages. Remove profanity from music tracks instantly with professional quality.">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="origin-when-cross-origin">
+    <meta name="worker-base" content="https://omnibackend2.fweago-flavaz.workers.dev">
+    <meta name="encoder-base" content="http://178.156.190.229:3000">
     
     <!-- Enhanced Styling for Better UX -->
     <style>
@@ -1057,12 +1057,8 @@
                 'audio/flac', 'audio/x-flac', 'audio/ogg', 'audio/opus',
                 'audio/mp4', 'audio/m4a', 'audio/aac', 'audio/webm'
             ],
-            STRIPE_PRICE_IDS: {
-                single_track: 'price_1S4NnmJ2Iq1764pCjA9xMnrn',
-                dj_pro: 'price_1S4NpzJ2Iq1764pCcZISuhug',
-                studio_elite: 'price_1S4Nr3J2Iq1764pCzHY4zIWr',
-                day_pass: 'price_1S4NsTJ2Iq1764pCCbru0Aao'
-            },
+            // Populated at runtime from the Worker via GET /prices
+            STRIPE_PRICE_IDS: {},
             ADMIN_HEADER: null // token is managed via UI/localStorage
         };
 
@@ -1120,6 +1116,12 @@
             try { token ? localStorage.setItem('FWEA_ADMIN_TOKEN', token) : localStorage.removeItem('FWEA_ADMIN_TOKEN'); } catch {}
             CONFIG.ADMIN_HEADER = token || null;
             appState.isAdmin = !!token;
+            // Keep a cookie for the Worker path-based checks
+            if (token) {
+                document.cookie = 'fwea_admin=1; Path=/; Max-Age=' + (60*60*24*7) + '; SameSite=Lax';
+            } else {
+                document.cookie = 'fwea_admin=; Path=/; Max-Age=0; SameSite=Lax';
+            }
             updateAdminUI();
         }
         function updateAdminUI() {
@@ -1147,6 +1149,9 @@
                     document.body.classList.add('wix-embed');
                 }
 
+                // Fetch Stripe price IDs from the Worker so we never hardcode
+                await loadPrices();
+
                 // Setup event listeners
                 setupEventListeners();
 
@@ -1165,6 +1170,30 @@
                 showAlert('Failed to initialize application. Please refresh the page.', 'error');
             }
         });
+
+        async function loadPrices() {
+            try {
+                const resp = await fetch(`${CONFIG.API_BASE}/prices`);
+                if (!resp.ok) throw new Error('Failed to load prices');
+                const data = await resp.json();
+                if (data && data.success && data.prices) {
+                    CONFIG.STRIPE_PRICE_IDS = data.prices;
+                }
+                // Disable plan buttons that have no price id
+                document.querySelectorAll('.pricing-card .plan-button').forEach(btn => {
+                    const match = /selectPlan\('([^']+)'\)/.exec(btn.getAttribute('onclick')||'');
+                    const plan = match && match[1];
+                    if (plan && !CONFIG.STRIPE_PRICE_IDS[plan]) {
+                        btn.disabled = true;
+                        btn.title = 'Temporarily unavailable';
+                        btn.style.opacity = '0.6';
+                        btn.style.cursor = 'not-allowed';
+                    }
+                });
+            } catch (e) {
+                console.warn('Price load failed:', e);
+            }
+        }
 
         // Enhanced Event Listeners Setup
         function setupEventListeners() {
@@ -1243,18 +1272,34 @@
 
             if (signInBtn && tokenInput) {
                 signInBtn.addEventListener('click', () => {
-                    const tok = tokenInput.value.trim();
-                    if (!tok) return showAlert('Please enter an admin token.', 'warning');
-                    setAdminToken(tok);
-                    tokenInput.value = '';
-                    showAlert('Admin signed in.', 'success');
+                    (async () => {
+                        const tok = tokenInput.value.trim();
+                        if (!tok) return showAlert('Please enter an admin token.', 'warning');
+                        try {
+                            const resp = await fetch(`${CONFIG.API_BASE}/admin-login`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-FWEA-Admin': tok },
+                                body: JSON.stringify({ token: tok })
+                            });
+                            if (!resp.ok) throw new Error('Invalid admin token');
+                            setAdminToken(tok);
+                            tokenInput.value = '';
+                            showAlert('Admin signed in.', 'success');
+                        } catch (err) {
+                            showAlert(err.message || 'Admin sign-in failed', 'error');
+                        }
+                    })();
                 });
             }
 
             if (signOutBtn) {
                 signOutBtn.addEventListener('click', () => {
-                    setAdminToken(null);
-                    showAlert('Admin signed out.', 'info');
+                    (async () => {
+                        try { await fetch(`${CONFIG.API_BASE}/admin-logout`, { method: 'POST' }); } catch {}
+                        setAdminToken(null);
+                        document.cookie = 'fwea_admin=; Path=/; Max-Age=0; SameSite=Lax';
+                        showAlert('Admin signed out.', 'info');
+                    })();
                 });
             }
         }
@@ -1304,6 +1349,7 @@
             
             appState.isProcessing = true;
             appState.showSection('processing');
+            document.getElementById('processingSection').style.display = 'block';
 
             try {
                 // Create FormData
@@ -1331,8 +1377,15 @@
                 const result = await response.json();
 
                 if (response.ok && result.success) {
-                    appState.processingResult = result;
-                    await handleProcessingSuccess(result);
+                    // If the backend returns an immediate result, finish; otherwise poll by processId
+                    if (result.fullAudioUrl || result.previewUrl) {
+                        appState.processingResult = result;
+                        await handleProcessingSuccess(result);
+                    } else if (result.processId) {
+                        await pollProcessing(result.processId);
+                    } else {
+                        throw new Error('Processing started, but no tracking id returned');
+                    }
                 } else {
                     throw new Error(result.error || result.details || 'Processing failed');
                 }
@@ -1344,6 +1397,36 @@
                 appState.isProcessing = false;
             }
         }
+
+        async function pollProcessing(processId) {
+            let done = false; let tries = 0;
+            while (!done && tries < 600) { // up to ~15 minutes
+                try {
+                    const resp = await fetch(`${CONFIG.API_BASE}/status?pid=${encodeURIComponent(processId)}`);
+                    const data = await resp.json();
+                    if (data.error) throw new Error(data.error);
+                    if (typeof data.progress === 'number') {
+                        updateProgress(data.progress, data.label || getStepMessage(data.step || 1));
+                    }
+                    if (Array.isArray(data.languages)) {
+                        const languageList = document.getElementById('languageList');
+                        if (languageList) languageList.textContent = data.languages.join(', ');
+                    }
+                    if (data.done && (data.fullAudioUrl || data.previewUrl)) {
+                        appState.processingResult = data;
+                        await handleProcessingSuccess(data);
+                        done = true; break;
+                    }
+                } catch (e) {
+                    console.warn('Status poll error:', e.message || e);
+                }
+                tries += 1;
+                await sleep(1500);
+            }
+            if (!done) throw new Error('Processing timed out. Please try again later.');
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
         // Progress Animation
         function animateProcessingSteps() {
@@ -1553,7 +1636,8 @@
                 // Create Stripe checkout session
                 const priceId = CONFIG.STRIPE_PRICE_IDS[planType];
                 if (!priceId) {
-                    throw new Error(`Invalid plan type: ${planType}`);
+                    showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
+                    return;
                 }
 
                 showAlert('Redirecting to secure payment...', 'success');
@@ -1735,8 +1819,5 @@
         console.log('🎵 FWEA-I Frontend loaded successfully');
     </script>
 
-    <!-- Additional Meta Tags for Better Wix Integration -->
-    <meta name="robots" content="noindex, nofollow">
-    <meta name="referrer" content="origin-when-cross-origin">
 </body>
 </html>

@@ -1822,11 +1822,18 @@ async function enqueueExternalEncodeJob(env, {
       // If your encoder prefers to POST back bytes, it can POST to /encoder-callback with dataUrl instead.
     },
     format,
+    previewWindow: { start: 0, end: 30 },
     profanityTimestamps,
     processId,
     fingerprint,
     callback: `${base}/encoder-callback?pid=${encodeURIComponent(processId)}&fp=${encodeURIComponent(fingerprint)}`
   };
+  try {
+    // Infer a 60s cap for studio if frontend passed it earlier via progress context (best-effort)
+    if (request && typeof request.json === 'function') {
+      // no-op: body is not accessible here; rely on front-end plan type normally
+    }
+  } catch {}
 
   if (env.ENCODER_URL) {
     const baseUrl = normalizeBaseUrl(String(env.ENCODER_URL || ''));

@@ -8,6 +8,9 @@ workers_dev = true
 [vars]
 FRONTEND_URL = "https://fwea-i.com"
 WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev"
+ENCODER_URL = "http://178.156.190.229:3000"
+STRIPE_PRICE_SINGLE = "price_1S4NnmJ2Iq1764pCjA9xMnrn"
+STRIPE_PRICE_DAYPASS = "price_1S4NstJ2Iq1764pCCbrru0Aao"
 
 [assets]
 directory = "./public"
@@ -55,15 +58,15 @@ command = "echo 'No build step required'"
 
 [env.production]
 name = "omnibackend2"
-vars = { FRONTEND_URL = "https://fwea-i.com", WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev" }
+vars = { FRONTEND_URL = "https://fwea-i.com", WORKER_BASE_URL = "https://omnibackend2.fweago-flavaz.workers.dev", ENCODER_URL = "http://178.156.190.229:3000", STRIPE_PRICE_SINGLE = "price_1S4NnmJ2Iq1764pCjA9xMnrn", STRIPE_PRICE_DAYPASS = "price_1S4NstJ2Iq1764pCCbrru0Aao" }
 
 [env.staging]
 name = "omnibackend2-staging"
-vars = { FRONTEND_URL = "https://staging.fwea-i.com", WORKER_BASE_URL = "https://omnibackend2-staging.fweago-flavaz.workers.dev" }
+vars = { FRONTEND_URL = "https://staging.fwea-i.com", WORKER_BASE_URL = "https://omnibackend2-staging.fweago-flavaz.workers.dev", ENCODER_URL = "http://staging-encoder.example.com", STRIPE_PRICE_SINGLE = "price_staging_single", STRIPE_PRICE_DAYPASS = "price_staging_daypass" }
 
 [env.development]
 name = "omnibackend2-dev"
-vars = { FRONTEND_URL = "http://localhost:3000", WORKER_BASE_URL = "http://localhost:8787" }
+vars = { FRONTEND_URL = "http://localhost:3000", WORKER_BASE_URL = "http://localhost:8787", ENCODER_URL = "http://localhost:3000", STRIPE_PRICE_SINGLE = "price_dev_single", STRIPE_PRICE_DAYPASS = "price_dev_daypass" }
 
 [[migrations]]
 tag = "v1"

@@ -1,8 +1,12 @@
+# ---- Base image --------------------------------------------------------------
 FROM node:20-slim
 
-# Install ffmpeg
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl && rm -rf /var/lib/apt/lists/*
+# ---- System deps (ffmpeg, curl) ---------------------------------------------
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
+# ---- App metadata ------------------------------------------------------------
 WORKDIR /app
 ARG COMMIT_SHA="unknown"
 LABEL org.opencontainers.image.source="https://github.com/Fwea-Go/omni4" \
@@ -10,25 +14,32 @@ LABEL org.opencontainers.image.source="https://github.com/Fwea-Go/omni4" \
       org.opencontainers.image.title="fwea-audio-encoder" \
       org.opencontainers.image.description="FFmpeg-based profanity cleaner encoder"
 
-RUN useradd -m appuser
-RUN mkdir -p /app/tmp && chown -R appuser:appuser /app/tmp
+# ---- Dedicated non-root user -------------------------------------------------
+RUN useradd -m -u 10001 appuser \
+  && mkdir -p /app/tmp \
+  && chown -R appuser:appuser /app
 ENV TMPDIR=/app/tmp
 
-# Install deps first (better caching)
-COPY --chown=appuser:appuser package*.json ./
+# ---- Install node deps first (better caching) --------------------------------
 ENV NODE_ENV=production
-RUN npm ci --omit=dev || npm install --omit=dev
+COPY --chown=appuser:appuser package*.json ./
+# Prefer npm ci when lockfile exists; fallback to npm install when it doesn't
+RUN (npm ci --omit=dev || npm install --omit=dev) \
+  && npm cache clean --force
 
-# App code
+# ---- Copy app code -----------------------------------------------------------
 COPY --chown=appuser:appuser . .
 
-# Drop privileges: run as non-root user
+# ---- Runtime env -------------------------------------------------------------
 USER appuser
 ENV PORT=3000
+# Helpful FFmpeg diagnostics (logs written to /app/tmp)
+ENV FFREPORT=file=/app/tmp/ffmpeg-report-%p-%t.log:level=32
 
-# Container health check (requires /health endpoint in server.js)
+# ---- Healthcheck -------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sS --connect-timeout 2 --max-time 4 "http://localhost:${PORT:-3000}/health" | grep -q '"ok":true' || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT:-3000}/health" | grep -q '"ok":true' || exit 1
 
+# ---- Ports & Entrypoint ------------------------------------------------------
 EXPOSE 3000
 CMD ["node", "server.js"]

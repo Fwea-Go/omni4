@@ -297,6 +297,7 @@ function getCorsHeaders(request, env) {
         workerOrigin,
         'https://fwea-i.com',
         'https://www.fwea-i.com',
+        'https://checkout.stripe.com',
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'https://omni2-8d2.pages.dev',
@@ -330,7 +331,9 @@ function getCorsHeaders(request, env) {
         'Access-Control-Max-Age': '86400',
         'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status, X-Progress',
         'Cross-Origin-Resource-Policy': 'cross-origin',
-        'Timing-Allow-Origin': '*'
+        'Timing-Allow-Origin': '*',
+        'Permissions-Policy': 'payment=(self "https://checkout.stripe.com")',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
     };
 
     return allowOrigin === workerOrigin ? baseCors : { ...baseCors, 'Access-Control-Allow-Credentials': 'true' };
@@ -1142,6 +1145,25 @@ function getBitrateForPlan(plan) {
     return bitrates[plan] || '128kbps';
 }
 
+function normalizePlanType(raw) {
+  const v = String(raw || '').toLowerCase().replace(/\s+/g, '_');
+  const map = {
+    single: 'single_track',
+    single_track: 'single_track',
+    track: 'single_track',
+    daypass: 'day_pass',
+    day_pass: 'day_pass',
+    pass: 'day_pass',
+    dj: 'dj_pro',
+    dj_pro: 'dj_pro',
+    pro: 'dj_pro',
+    studio: 'studio_elite',
+    elite: 'studio_elite',
+    studio_elite: 'studio_elite',
+  };
+  return map[v] || v || 'single_track';
+}
+
 // ---------- Signing and Security ----------
 async function signR2Key(key, env, ttlSeconds = 15 * 60) {
   if (!env.AUDIO_URL_SECRET) {
@@ -1318,6 +1340,7 @@ async function handlePaymentCreation(request, env, corsHeaders) {
 
   try {
     const { priceId, type, fileName, email, fingerprint } = await request.json();
+    const normalizedType = normalizePlanType(type);
     // Admin bypass: if admin token present, skip Stripe and grant access
     if (isAdminRequest(request, env)) {
       const successUrl = `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id=ADMIN_BYPASS&admin=1`;
@@ -1341,9 +1364,9 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     PRICE_BY_TYPE = buildPriceMapFromEnv(env);
 
     const priceByType = PRICE_BY_TYPE;
-    const expectedPrice = priceByType[type];
+    const expectedPrice = priceByType[normalizedType];
     if (!expectedPrice) {
-      return new Response(JSON.stringify({ error: `Price not configured for plan '${type}'` }), {
+      return new Response(JSON.stringify({ error: `Price not configured for plan '${normalizedType}'` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
@@ -1354,7 +1377,7 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     }
     const finalPriceId = priceId || expectedPrice;
 
-    const isSubscription = (type === 'dj_pro' || type === 'studio_elite');
+    const isSubscription = (normalizedType === 'dj_pro' || normalizedType === 'studio_elite');
 
     const session = await createCheckoutSession({
       priceId: finalPriceId,
@@ -1363,7 +1386,7 @@ async function handlePaymentCreation(request, env, corsHeaders) {
       successUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/cancel`,
       metadata: {
-        type: type || '',
+        type: normalizedType || '',
         fileName: fileName || '',
         fingerprint: fingerprint || 'unknown',
         processingType: 'audio_cleaning',

@@ -332,7 +332,7 @@ function getCorsHeaders(request, env) {
         'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag, Content-Type, Last-Modified, X-Preview-Limit-Ms, X-Profanity, X-Processing-Status, X-Progress',
         'Cross-Origin-Resource-Policy': 'cross-origin',
         'Timing-Allow-Origin': '*',
-        'Permissions-Policy': 'payment=(self "https://checkout.stripe.com")',
+        // 'Permissions-Policy': 'payment=(self "https://checkout.stripe.com")', // Removed as per instructions
         'Referrer-Policy': 'strict-origin-when-cross-origin',
     };
 
@@ -683,20 +683,42 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
 
 // ---------- Enhanced Transcription (Cloudflare AI first, then external; no RunPod) ----------
 async function transcribeAudioEnhanced(audioBuffer, env) {
-  // Prefer Cloudflare Workers AI Whisper
+  // Prefer Cloudflare Workers AI Whisper; try full model then tiny-en fallback
   try {
     if (env.AI) {
       const maxSize = 25 * 1024 * 1024; // Workers AI input cap
       const buf = audioBuffer.byteLength > maxSize ? audioBuffer.slice(0, maxSize) : audioBuffer;
-      const response = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
-      if (response && (response.text || response.segments)) {
-        const text = response.text || '';
-        const segments = Array.isArray(response.segments) && response.segments.length ? response.segments : [{start:0,end:Math.max(1, Math.floor((buf?.byteLength||audioBuffer.byteLength)/16000)), text}];
-        return { text, segments };
+
+      // Attempt 1: general Whisper
+      try {
+        const resp1 = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
+        if (resp1 && (resp1.text || (Array.isArray(resp1.segments) && resp1.segments.length))) {
+          const text = resp1.text || '';
+          const segments = Array.isArray(resp1.segments) && resp1.segments.length
+            ? resp1.segments
+            : [{ start: 0, end: Math.max(1, Math.floor((buf?.byteLength || audioBuffer.byteLength) / 16000)), text }];
+          return { text, segments };
+        }
+      } catch (e1) {
+        console.warn('Workers AI whisper attempt failed:', e1?.message || e1);
+      }
+
+      // Attempt 2: tiny English-only model as a fallback
+      try {
+        const resp2 = await env.AI.run('@cf/openai/whisper-tiny-en', { audio: [...new Uint8Array(buf)] });
+        if (resp2 && (resp2.text || (Array.isArray(resp2.segments) && resp2.segments.length))) {
+          const text = resp2.text || '';
+          const segments = Array.isArray(resp2.segments) && resp2.segments.length
+            ? resp2.segments
+            : [{ start: 0, end: Math.max(1, Math.floor((buf?.byteLength || audioBuffer.byteLength) / 16000)), text }];
+          return { text, segments };
+        }
+      } catch (e2) {
+        console.warn('Workers AI whisper-tiny-en attempt failed:', e2?.message || e2);
       }
     }
   } catch (e) {
-    console.warn('Workers AI transcription failed:', e?.message || e);
+    console.warn('Workers AI transcription wrapper failed:', e?.message || e);
   }
 
   // Fallback: external endpoint if configured
@@ -710,7 +732,9 @@ async function transcribeAudioEnhanced(audioBuffer, env) {
       if (!resp.ok) throw new Error(`External transcriber error: ${resp.status}`);
       const data = await resp.json();
       const text = data.text || data.transcription || '';
-      const segments = Array.isArray(data.segments) && data.segments.length ? data.segments : [{start:0,end:Math.max(1, Math.floor((audioBuffer.byteLength)/16000)), text}];
+      const segments = Array.isArray(data.segments) && data.segments.length
+        ? data.segments
+        : [{ start: 0, end: Math.max(1, Math.floor((audioBuffer.byteLength) / 16000)), text }];
       return { text, segments };
     }
   } catch (e) {

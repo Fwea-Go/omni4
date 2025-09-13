@@ -1445,6 +1445,9 @@
         }
 
         async function pollProcessing(processId) {
+            // Smoothly advance progress while waiting on backend updates
+let smoothP = 20; // we already used 0–20% for upload
+let lastTick = Date.now();
             let done = false; let tries = 0;
             while (!done && tries < 600) { // up to ~15 minutes
                 try {
@@ -1468,6 +1471,17 @@
                     }
                 } catch (e) {
                     console.warn('Status poll error:', e.message || e);
+                    // If backend didn't send numeric progress, advance a little so UI doesn't appear stuck at 20%
+if (Number.isNaN(Number(data?.progress)) || typeof data.progress !== 'number') {
+  const now = Date.now();
+  if (now - lastTick > 1200) {
+    smoothP = Math.min(smoothP + 2, 95);
+    updateProgress(smoothP, data?.label || 'Processing...');
+    lastTick = now;
+  }
+} else {
+  smoothP = Math.max(smoothP, data.progress);
+}
                 }
                 tries += 1;
                 await sleep(1500);
@@ -1682,38 +1696,61 @@
                 // Track plan selection
                 trackEvent('plan_selected', { plan: planType });
 
-                // Create Stripe checkout session
-                const priceId = CONFIG.STRIPE_PRICE_IDS[planType];
-                if (!priceId) {
-                    showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
-                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-                    return;
-                }
+                // Create Stripe checkout session (server-first, client fallback)
+// 1) Make sure we have price ids from the Worker
+let priceId = CONFIG.STRIPE_PRICE_IDS[planType];
+if (!priceId) {
+  try { await loadPrices(); } catch {}
+  priceId = CONFIG.STRIPE_PRICE_IDS[planType];
+}
+if (!priceId) {
+  showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
+  if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
+  return;
+}
 
-                showAlert('Redirecting to secure payment...', 'success');
+showAlert('Redirecting to secure payment...', 'success');
 
-                const response = await fetch(`${CONFIG.API_BASE}/create-payment`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        priceId,
-                        type: planType,
-                        fileName: appState.currentFile?.name || 'audio.mp3',
-                        fingerprint: appState.userFingerprint,
-                        email: null // Will be collected in Stripe checkout
-                    })
-                });
+// 2) Try server-created Checkout session first
+let redirected = false;
+try {
+  const response = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      priceId,
+      type: planType,
+      fileName: appState.currentFile?.name || 'audio.mp3',
+      fingerprint: appState.userFingerprint,
+      email: null
+    })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (response.ok && result && result.success && result.url) {
+    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
+    (window.top || window).location.href = result.url; // avoid iframe issues
+    redirected = true;
+  }
+} catch (_) {
+  // fall through to client-only fallback
+}
 
-                const result = await response.json();
-                
-                if (result.success && result.url) {
-                    // Redirect to Stripe Checkout
-                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-                    window.location.href = result.url;
-                } else {
-                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-                    throw new Error(result.error || 'Failed to create payment session');
-                }
+// 3) Fallback: client-only redirectToCheckout (avoids 500s from server)
+if (!redirected) {
+  const mode = (planType === 'single_track' || planType === 'day_pass') ? 'payment' : 'subscription';
+  const successUrl = `${location.origin}${location.pathname}?session=success`;
+  const cancelUrl  = `${location.origin}${location.pathname}?cancelled=1`;
+  const { error } = await stripe.redirectToCheckout({
+    mode,
+    lineItems: [{ price: priceId, quantity: 1 }],
+    successUrl,
+    cancelUrl
+  });
+  if (error) {
+    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
+    throw new Error(error.message || 'Stripe redirect failed');
+  }
+}
 
             } catch (error) {
                 console.error('Plan selection error:', error);

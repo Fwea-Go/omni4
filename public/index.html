@@ -891,7 +891,7 @@
                 <div class="progress-text" id="progressText">0% - Estimated time: 2-3 minutes</div>
                 
                 <div id="detectedLanguages" style="text-align: center; margin: 16px 0; color: var(--text-secondary);">
-                    🔍 <span>Detecting Languages: <span id="languageList">English</span></span>
+                    🔍 <span>Detecting Languages: <span id="languageList">Detecting...</span></span>
                 </div>
                 
                 <ul class="processing-steps">
@@ -1112,6 +1112,7 @@
 
         const appState = new AppState();
         let stripe;
+        let previewLimitSec = 30; // default preview cap (30s); Studio plan gets 60s
 
         // --- Admin helpers ---
         function getAdminToken() {
@@ -1240,7 +1241,16 @@
             // Preview player
             previewPlayBtn.addEventListener('click', togglePreviewPlayback);
             
-            previewAudio.addEventListener('timeupdate', updateAudioTime);
+            previewAudio.addEventListener('timeupdate', () => {
+                // Enforce preview cap
+                if (!isNaN(previewAudio.duration) && previewAudio.currentTime >= previewLimitSec) {
+                    previewAudio.currentTime = previewLimitSec;
+                    previewAudio.pause();
+                    const playBtn = document.getElementById('previewPlayBtn');
+                    if (playBtn) playBtn.textContent = '▶️';
+                }
+                updateAudioTime();
+            });
             previewAudio.addEventListener('loadedmetadata', () => {
                 updateAudioTime();
             });
@@ -1466,8 +1476,9 @@
                     lastData = data;
 
                     if (data && typeof data.progress === 'number') {
-                        updateProgress(data.progress, data.label || getStepMessage(data.step || 1));
-                        smoothP = Math.max(smoothP, data.progress);
+                        const pct = data.progress <= 1 ? Math.round(data.progress * 100) : data.progress; // normalize 0–1 to %
+                        updateProgress(pct, data.label || getStepMessage(data.step || 1));
+                        smoothP = Math.max(smoothP, pct);
                     } else {
                         // advance a little so UI doesn't appear stuck at 20%
                         const now = Date.now();
@@ -1555,11 +1566,16 @@
             document.getElementById('languagesDetected').textContent = (result.detectedLanguages && result.detectedLanguages.length) ? result.detectedLanguages.length : (result.languages && result.languages.length) ? result.languages.length : 1;
             document.getElementById('qualityEnhanced').textContent = 'AI';
 
-            // Set preview audio if returned
+            // Set preview audio source; fall back to full cleaned audio if preview is not provided
             const previewEl = document.getElementById('previewAudio');
-            if (result.previewUrl) {
-                previewEl.src = result.previewUrl;
+            const previewSrc = result.previewUrl || result.fullAudioUrl || '';
+            if (previewSrc) {
+                previewEl.src = previewSrc;
                 try { await previewEl.load(); } catch {}
+                // Cap preview length: 60s for Studio Elite, otherwise 30s
+                previewLimitSec = (appState.currentPlan === 'studio_elite') ? 60 : 30;
+                // Refresh the displayed total once metadata is known
+                previewEl.addEventListener('loadedmetadata', () => updateAudioTime(), { once: true });
             }
 
             // CTA logic: show download if we have full url, otherwise show upgrade
@@ -1682,8 +1698,8 @@
             
             if (previewAudio && audioTime && previewAudio.duration) {
                 const current = Math.floor(previewAudio.currentTime);
-                const total = Math.floor(previewAudio.duration);
-                audioTime.textContent = `${formatTime(current)} / ${formatTime(total)}`;
+                const cappedTotal = Math.floor(Math.min(previewAudio.duration, previewLimitSec));
+                audioTime.textContent = `${formatTime(current)} / ${formatTime(cappedTotal)}`;
             }
         }
 
@@ -1695,21 +1711,22 @@
 
         // Plan Selection and Stripe Integration
         async function selectPlan(planType) {
+            let activeBtn = null;
             try {
                 appState.currentPlan = planType;
-                const activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
+                activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
                 if (activeBtn) { activeBtn.disabled = true; activeBtn.style.opacity = '0.6'; }
 
                 if (planType === 'free') {
                     showAlert('You are using the free plan with 30-second previews.', 'success');
-                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     return;
                 }
 
-                // Track plan selection
                 trackEvent('plan_selected', { plan: planType });
+                // Persist pending checkout so we can resume after redirect
+                try { localStorage.setItem('FWEA_PENDING', JSON.stringify({ plan: planType, fp: appState.userFingerprint, ts: Date.now() })); } catch {}
 
-                // Make sure price IDs are loaded
+                // Ensure price is known
                 let priceId = CONFIG.STRIPE_PRICE_IDS[planType];
                 if (!priceId) {
                     try { await loadPrices(); } catch {}
@@ -1717,48 +1734,36 @@
                 }
                 if (!priceId) {
                     showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
-                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
                     return;
                 }
 
-                const successUrl = `${location.origin}${location.pathname}?session=success`;
-                const cancelUrl  = `${location.origin}${location.pathname}?cancelled=1`;
+                // Ask the Worker to create a Checkout Session and return the hosted Checkout URL
+                const resp = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        priceId,
+                        type: planType,
+                        fileName: appState.currentFile ? appState.currentFile.name : undefined,
+                        fingerprint: appState.userFingerprint
+                    })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success || !data.url) throw new Error(data.error || 'Payment creation failed');
 
-                // Always prefer client-side redirectToCheckout to avoid 500s & iframe issues
-                const mode = (planType === 'single_track' || planType === 'day_pass') ? 'payment' : 'subscription';
-                // Ensure we are not inside an iframe
-                if (window.top && window.top !== window) {
-                    // open a top-level tab for Checkout to satisfy Stripe's requirement
-                    const checkoutWin = window.top.open('about:blank', '_blank');
-                    const { error } = await stripe.redirectToCheckout({
-                        mode,
-                        lineItems: [{ price: priceId, quantity: 1 }],
-                        allowPromotionCodes: true,
-                        billingAddressCollection: 'auto',
-                        successUrl,
-                        cancelUrl
-                    });
-                    if (error) {
-                        if (checkoutWin) checkoutWin.close();
-                        throw new Error(error.message || 'Stripe redirect failed');
-                    }
-                } else {
-                    const { error } = await stripe.redirectToCheckout({
-                        mode,
-                        lineItems: [{ price: priceId, quantity: 1 }],
-                        allowPromotionCodes: true,
-                        billingAddressCollection: 'auto',
-                        successUrl,
-                        cancelUrl
-                    });
-                    if (error) throw new Error(error.message || 'Stripe redirect failed');
+                // Persist priceId before redirect
+                try { const p = JSON.parse(localStorage.getItem('FWEA_PENDING')||'{}'); p.priceId = priceId; localStorage.setItem('FWEA_PENDING', JSON.stringify(p)); } catch {}
+
+                // Always navigate the TOP window (works even when embedded)
+                try {
+                    (window.top || window).location.href = data.url;
+                } catch {
+                    window.location.href = data.url;
                 }
-
-                if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
             } catch (error) {
                 console.error('Plan selection error:', error);
                 showAlert('Failed to process payment. Please try again.', 'error');
-                const activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
+            } finally {
                 if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
             }
         }
@@ -1865,27 +1870,71 @@
         }
 
         // URL Parameter Handling (for payment success/cancel)
-        function handleUrlParameters() {
+        async function handleUrlParameters() {
             const urlParams = new URLSearchParams(window.location.search);
-            const sessionId = urlParams.get('session_id');
+            const sessionOk = urlParams.get('session') === 'success' || !!urlParams.get('session_id');
             const cancelled = urlParams.get('cancelled');
+            const sessionId = urlParams.get('session_id') || urlParams.get('cs_test') || urlParams.get('cs_live');
 
-            if (sessionId) {
-                showAlert('Payment successful! You can now download your clean audio.', 'success');
-                // Implement download logic here
-            } else if (cancelled) {
+            if (cancelled) {
                 showAlert('Payment cancelled. You can try again anytime.', 'warning');
+                try { localStorage.removeItem('FWEA_PENDING'); } catch {}
+                return;
+            }
+
+            if (!sessionOk) return; // nothing to do
+
+            // Try to unlock entitlements & fetch a fresh download URL for the most recent job
+            let pending = null;
+            try { pending = JSON.parse(localStorage.getItem('FWEA_PENDING') || 'null'); } catch {}
+
+            showAlert('Payment successful! Finalizing your access…', 'success');
+
+            try {
+                // Prefer a dedicated claim endpoint if available
+                const resp = await fetch(`${CONFIG.API_BASE}/claim-download`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId, fingerprint: appState.userFingerprint, plan: pending?.plan, priceId: pending?.priceId, fileName: pending?.fileName })
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data?.fullAudioUrl || data?.previewUrl) {
+                        // If the backend returned a fresh result for the last job, surface it immediately
+                        await handleProcessingSuccess({
+                            fullAudioUrl: data.fullAudioUrl,
+                            previewUrl: data.previewUrl,
+                            wordsRemoved: data.wordsRemoved,
+                            detectedLanguages: data.detectedLanguages
+                        });
+                        // Jump to results
+                        appState.showSection('results');
+                    }
+                } else {
+                    // Fallback: update entitlement locally (e.g., extend preview cap if Studio)
+                    if (pending?.plan === 'studio_elite') {
+                        previewLimitSec = 60;
+                    }
+                }
+            } catch (e) {
+                // Silent failure—user can still re-download from results if available
+                console.warn('Post-checkout claim failed:', e);
+            } finally {
+                try { localStorage.removeItem('FWEA_PENDING'); } catch {}
             }
         }
 
         // Initialize URL parameter handling
-        document.addEventListener('DOMContentLoaded', handleUrlParameters);
+        document.addEventListener('DOMContentLoaded', () => { handleUrlParameters().catch(()=>{}); });
 
         // Stripe Checkout helper for unlocking downloads/upgrades.
         if (typeof startCheckout !== 'function') {
             async function startCheckout(type, fileName, email) {
                 try {
                     const priceId = CONFIG.STRIPE_PRICE_IDS[type];
+                    // Persist pending checkout so we can resume after redirect
+                    try { localStorage.setItem('FWEA_PENDING', JSON.stringify({ plan: type, fp: appState.userFingerprint, fileName, ts: Date.now(), priceId })); } catch {}
                     if (!priceId) return showAlert('Invalid plan type selected.', 'error');
                     const resp = await fetch(`${CONFIG.API_BASE}/create-payment`, {
                         method: 'POST',
@@ -1899,6 +1948,17 @@
                     showAlert(e.message || 'Checkout failed', 'error');
                 }
             }
+        }
+
+        // After handleProcessingSuccess definition, add showDownloadOnly helper
+        function showDownloadOnly(url) {
+            try {
+                const dl = document.getElementById('downloadLink');
+                const up = document.getElementById('upgradeBtn');
+                if (up) up.style.display = 'none';
+                if (dl) { dl.href = url; dl.style.display = 'inline-block'; }
+                appState.showSection('results');
+            } catch {}
         }
 
         // Export functions for global access

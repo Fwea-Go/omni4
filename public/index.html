@@ -1386,6 +1386,9 @@
             ];
             if (bar) bar.style.width = '0%';
             if (txt) txt.textContent = '0% - Preparing upload...';
+            // Set initial language label to default so it doesn't appear stale
+            const languageList = document.getElementById('languageList');
+            if (languageList) languageList.textContent = 'Detecting...';
             if (status) status.textContent = 'Preparing upload...';
             steps.forEach(s => s && s.classList.remove('active','completed'));
         }
@@ -1446,42 +1449,53 @@
 
         async function pollProcessing(processId) {
             // Smoothly advance progress while waiting on backend updates
-let smoothP = 20; // we already used 0–20% for upload
-let lastTick = Date.now();
-            let done = false; let tries = 0;
+            let smoothP = 20; // we already used 0–20% for upload
+            let lastTick = Date.now();
+            let lastData = null;
+            let done = false;
+            let tries = 0;
+
             while (!done && tries < 600) { // up to ~15 minutes
                 try {
-                    let statusUrl = new URL(`${CONFIG.API_BASE}/status`);
+                    const statusUrl = new URL(`${CONFIG.API_BASE}/status`);
                     statusUrl.searchParams.set('pid', processId);
                     statusUrl.searchParams.set('id', processId);
+
                     const resp = await fetch(statusUrl.toString());
                     const data = await resp.json();
-                    if (data.error) throw new Error(data.error);
-                    if (typeof data.progress === 'number') {
+                    lastData = data;
+
+                    if (data && typeof data.progress === 'number') {
                         updateProgress(data.progress, data.label || getStepMessage(data.step || 1));
+                        smoothP = Math.max(smoothP, data.progress);
+                    } else {
+                        // advance a little so UI doesn't appear stuck at 20%
+                        const now = Date.now();
+                        if (now - lastTick > 1200) {
+                            smoothP = Math.min(smoothP + 2, 95);
+                            updateProgress(smoothP, (data && data.label) || 'Processing...');
+                            lastTick = now;
+                        }
                     }
-                    if (Array.isArray(data.languages)) {
+
+                    if (Array.isArray(data?.languages)) {
                         const languageList = document.getElementById('languageList');
                         if (languageList) languageList.textContent = data.languages.join(', ');
                     }
-                    if (data.done && (data.fullAudioUrl || data.previewUrl)) {
+                    if (data?.done && (data.fullAudioUrl || data.previewUrl)) {
                         appState.processingResult = data;
                         await handleProcessingSuccess(data);
-                        done = true; break;
+                        done = true;
+                        break;
                     }
                 } catch (e) {
-                    console.warn('Status poll error:', e.message || e);
-                    // If backend didn't send numeric progress, advance a little so UI doesn't appear stuck at 20%
-if (Number.isNaN(Number(data?.progress)) || typeof data.progress !== 'number') {
-  const now = Date.now();
-  if (now - lastTick > 1200) {
-    smoothP = Math.min(smoothP + 2, 95);
-    updateProgress(smoothP, data?.label || 'Processing...');
-    lastTick = now;
-  }
-} else {
-  smoothP = Math.max(smoothP, data.progress);
-}
+                    // network blip — keep UI alive with smoothing
+                    const now = Date.now();
+                    if (now - lastTick > 1200) {
+                        smoothP = Math.min(smoothP + 2, 95);
+                        updateProgress(smoothP, (lastData && lastData.label) || 'Processing...');
+                        lastTick = now;
+                    }
                 }
                 tries += 1;
                 await sleep(1500);
@@ -1535,6 +1549,7 @@ if (Number.isNaN(Number(data?.progress)) || typeof data.progress !== 'number') {
         // Success Handler
         async function handleProcessingSuccess(result) {
             updateProgress(100, 'Finalizing...');
+            document.getElementById('progressText').textContent = '100% - Finalizing...';
             // Update quick stats with safe fallbacks
             document.getElementById('wordsRemoved').textContent = result.wordsRemoved || result.profanityCount || '0';
             document.getElementById('languagesDetected').textContent = (result.detectedLanguages && result.detectedLanguages.length) ? result.detectedLanguages.length : (result.languages && result.languages.length) ? result.languages.length : 1;
@@ -1680,8 +1695,6 @@ if (Number.isNaN(Number(data?.progress)) || typeof data.progress !== 'number') {
 
         // Plan Selection and Stripe Integration
         async function selectPlan(planType) {
-            // Removed guard that prevents checkout when no processingResult
-
             try {
                 appState.currentPlan = planType;
                 const activeBtn = (document.activeElement && document.activeElement.classList?.contains('plan-button')) ? document.activeElement : null;
@@ -1696,62 +1709,52 @@ if (Number.isNaN(Number(data?.progress)) || typeof data.progress !== 'number') {
                 // Track plan selection
                 trackEvent('plan_selected', { plan: planType });
 
-                // Create Stripe checkout session (server-first, client fallback)
-// 1) Make sure we have price ids from the Worker
-let priceId = CONFIG.STRIPE_PRICE_IDS[planType];
-if (!priceId) {
-  try { await loadPrices(); } catch {}
-  priceId = CONFIG.STRIPE_PRICE_IDS[planType];
-}
-if (!priceId) {
-  showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
-  if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-  return;
-}
+                // Make sure price IDs are loaded
+                let priceId = CONFIG.STRIPE_PRICE_IDS[planType];
+                if (!priceId) {
+                    try { await loadPrices(); } catch {}
+                    priceId = CONFIG.STRIPE_PRICE_IDS[planType];
+                }
+                if (!priceId) {
+                    showAlert(`Plan temporarily unavailable (no price configured for: ${planType}).`, 'warning');
+                    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
+                    return;
+                }
 
-showAlert('Redirecting to secure payment...', 'success');
+                const successUrl = `${location.origin}${location.pathname}?session=success`;
+                const cancelUrl  = `${location.origin}${location.pathname}?cancelled=1`;
 
-// 2) Try server-created Checkout session first
-let redirected = false;
-try {
-  const response = await fetch(`${CONFIG.API_BASE}/create-payment`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      priceId,
-      type: planType,
-      fileName: appState.currentFile?.name || 'audio.mp3',
-      fingerprint: appState.userFingerprint,
-      email: null
-    })
-  });
-  const result = await response.json().catch(() => ({}));
-  if (response.ok && result && result.success && result.url) {
-    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-    (window.top || window).location.href = result.url; // avoid iframe issues
-    redirected = true;
-  }
-} catch (_) {
-  // fall through to client-only fallback
-}
+                // Always prefer client-side redirectToCheckout to avoid 500s & iframe issues
+                const mode = (planType === 'single_track' || planType === 'day_pass') ? 'payment' : 'subscription';
+                // Ensure we are not inside an iframe
+                if (window.top && window.top !== window) {
+                    // open a top-level tab for Checkout to satisfy Stripe's requirement
+                    const checkoutWin = window.top.open('about:blank', '_blank');
+                    const { error } = await stripe.redirectToCheckout({
+                        mode,
+                        lineItems: [{ price: priceId, quantity: 1 }],
+                        allowPromotionCodes: true,
+                        billingAddressCollection: 'auto',
+                        successUrl,
+                        cancelUrl
+                    });
+                    if (error) {
+                        if (checkoutWin) checkoutWin.close();
+                        throw new Error(error.message || 'Stripe redirect failed');
+                    }
+                } else {
+                    const { error } = await stripe.redirectToCheckout({
+                        mode,
+                        lineItems: [{ price: priceId, quantity: 1 }],
+                        allowPromotionCodes: true,
+                        billingAddressCollection: 'auto',
+                        successUrl,
+                        cancelUrl
+                    });
+                    if (error) throw new Error(error.message || 'Stripe redirect failed');
+                }
 
-// 3) Fallback: client-only redirectToCheckout (avoids 500s from server)
-if (!redirected) {
-  const mode = (planType === 'single_track' || planType === 'day_pass') ? 'payment' : 'subscription';
-  const successUrl = `${location.origin}${location.pathname}?session=success`;
-  const cancelUrl  = `${location.origin}${location.pathname}?cancelled=1`;
-  const { error } = await stripe.redirectToCheckout({
-    mode,
-    lineItems: [{ price: priceId, quantity: 1 }],
-    successUrl,
-    cancelUrl
-  });
-  if (error) {
-    if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
-    throw new Error(error.message || 'Stripe redirect failed');
-  }
-}
-
+                if (activeBtn) { activeBtn.disabled = false; activeBtn.style.opacity = ''; }
             } catch (error) {
                 console.error('Plan selection error:', error);
                 showAlert('Failed to process payment. Please try again.', 'error');

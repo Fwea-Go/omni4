@@ -1042,20 +1042,54 @@ function estimateAudioDuration(audioBuffer) {
     return Math.max(1, Math.floor(audioBuffer.byteLength / avgBytesPerSecond));
 }
 
+// ---------- Cookie Helpers for lightweight admin session ----------
+function parseCookies(header = '') {
+  const out = {};
+  header.split(';').forEach(p => {
+    const [k, ...rest] = p.split('=');
+    if (!k) return;
+    const key = k.trim();
+    const val = rest.join('=').trim();
+    if (key) out[key] = decodeURIComponent(val || '');
+  });
+  return out;
+}
+function makeCookie(
+  name, value,
+  { maxAge, path='/', secure=true, httpOnly=true, sameSite='None', domain } = {}
+) {
+  let c = `${name}=${encodeURIComponent(value)}`;
+  if (maxAge != null) c += `; Max-Age=${Math.floor(maxAge)}`;
+  if (path) c += `; Path=${path}`;
+  if (domain) c += `; Domain=${domain}`;
+  if (secure) c += `; Secure`;
+  if (httpOnly) c += `; HttpOnly`;
+  if (sameSite) c += `; SameSite=${sameSite}`;
+  return c;
+}
+
 // ---------- Utility Functions ----------
 function isAdminRequest(request, env) {
-    try {
-        const adminHeader = request.headers.get('X-FWEA-Admin') || '';
-        const auth = request.headers.get('Authorization') || '';
-        const bearer = auth.replace(/^Bearer\s+/i, '').trim();
-        const adminToken = env.ADMIN_API_TOKEN || '';
-        if (!adminToken) return false;
-        if (adminHeader && adminHeader === adminToken) return true;
-        if (bearer && bearer === adminToken) return true;
-        return false;
-    } catch {
-        return false;
+  try {
+    const adminToken = env.ADMIN_API_TOKEN || '';
+    if (!adminToken) return false;
+
+    // Header/Bearer support
+    const adminHeader = request.headers.get('X-FWEA-Admin') || '';
+    const auth = request.headers.get('Authorization') || '';
+    const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+    if ((adminHeader && adminHeader === adminToken) || (bearer && bearer === adminToken)) {
+      return true;
     }
+
+    // Cookie set by /admin-login
+    const cookies = parseCookies(request.headers.get('Cookie') || '');
+    if (cookies['fwea_admin'] === '1') return true;
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function getWorkerBase(env, request) {

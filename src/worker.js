@@ -655,16 +655,17 @@ async function processAudioEnhanced(audioFile, planType, fingerprint, env, reque
         await updateProgress(env, fingerprint, processId, 'render', 70, {state:'rendering'});
         // Step 4: Audio processing and generation
         const audioResults = await generateAudioOutputsEnhanced(
-            audioBuffer,
-            results.profanityTimestamps,
-            planType,
-            results.previewDuration,
-            fingerprint,
-            env,
-            audioFile.type,
-            audioFile.name,
-            request
-        );
+  audioBuffer,
+  results.profanityTimestamps,
+  planType,
+  results.previewDuration,
+  fingerprint,
+  env,
+  audioFile.type,
+  audioFile.name,
+  request,
+  processId
+);
 
         await updateProgress(env, fingerprint, processId, 'finalize', 90, {state:'finalizing'});
         // Merge audio results
@@ -822,9 +823,9 @@ async function findProfanityTimestampsEnhanced(transcription, languages, env) {
 }
 
 // ---------- Enhanced Audio Output Generation (No RunPod, WAV for cleaned outputs) ----------
-async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, planType, previewDuration, fingerprint, env, mimeType, originalName, request) {
+async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, planType, previewDuration, fingerprint, env, mimeType, originalName, request, processId) {
   const base = getWorkerBase(env, request);
-  const processId = generateProcessId();
+  
 
   // Determine source extension (for cases with no profanity)
   const extMap = {
@@ -1273,6 +1274,7 @@ async function handlePrices(request, env, corsHeaders) {
   try {
     const map = buildPriceMapFromEnv(env);
     const payload = {
+      success: true,        // <-- added
       prices: map,
       // Advertise which plans are subscriptions so the UI can choose Checkout mode
       subscriptions: {
@@ -1653,7 +1655,7 @@ async function handleTrackEvent(request, env, corsHeaders){
 }
 async function handleStatusQuery(request, env, corsHeaders){
   const url = new URL(request.url);
-  const processId = url.searchParams.get('id') || url.searchParams.get('processId') || '';
+  const processId = url.searchParams.get('id') || url.searchParams.get('pid') || url.searchParams.get('processId') || '';
   const fingerprint = url.searchParams.get('fp') || 'anonymous';
   const txt = await readProgress(env, fingerprint, processId);
   let payload = null;

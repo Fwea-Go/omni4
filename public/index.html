@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎵 Professional Audio Cleaning - FWEA-I</title>
+    <meta name="description" content="Professional AI-powered audio cleaning in 100+ languages. Remove profanity with precision while maintaining studio-grade quality.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
+
+    <style>
+        :root {
+            --primary: #00d4ff;
+            --primary-dark: #0099cc;
+            --secondary: #1fb8cd;
+            --accent: #40e0d0;
+            --bg-dark: #0a0a0a;
+            --bg-card: rgba(255, 255, 255, 0.06);
+            --bg-section: rgba(255, 255, 255, 0.04);
+            --border: rgba(255, 255, 255, 0.12);
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --success: #00ff88;
+            --error: #ff4757;
+            --warning: #ffa502;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, var(--bg-dark) 0%, #1a1a2e 35%, #16213e 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            font-feature-settings: 'kern' 1, 'liga' 1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        .header {
+            padding: 60px 0 80px;
+            text-align: center;
+            background: radial-gradient(ellipse at center, rgba(0, 212, 255, 0.05) 0%, transparent 70%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 0%, rgba(0, 212, 255, 0.02) 50%, transparent 100%);
+            animation: shimmer 8s infinite linear;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header h1 {
+            font-size: clamp(2.5rem, 6vw, 5rem);
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 50%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 24px;
+            line-height: 1.1;
+        }
+
+        .header .subtitle {
+            font-size: clamp(1.2rem, 3vw, 2rem);
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+        .header .description {
+            font-size: clamp(1rem, 2.5vw, 1.3rem);
+            color: var(--text-muted);
+            max-width: 800px;
+            margin: 0 auto 40px;
+            line-height: 1.5;
+        }
+
+        .feature-badges {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            margin-top: 48px;
+        }
+
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 50px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--primary);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .badge:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 212, 255, 0.2);
+            border-color: var(--primary);
+        }
+
+        /* Main Content */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 48px;
+            margin-bottom: 80px;
+            align-items: start;
+        }
+
+        .content-section {
+            background: var(--bg-section);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 40px;
+            backdrop-filter: blur(20px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .content-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+            opacity: 0.6;
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section-description {
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
+
+        /* Upload Section */
+        .upload-zone {
+            border: 2px dashed var(--primary);
+            border-radius: 16px;
+            padding: 60px 32px;
+            text-align: center;
+            margin-bottom: 32px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            background: linear-gradient(135deg, transparent 0%, rgba(0, 212, 255, 0.02) 100%);
+        }
+
+        .upload-zone:hover,
+        .upload-zone.dragover {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.05) 0%, rgba(64, 224, 208, 0.05) 100%);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 60px rgba(0, 212, 255, 0.15);
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            margin-bottom: 24px;
+            animation: float 4s ease-in-out infinite;
+            filter: drop-shadow(0 4px 8px rgba(0, 212, 255, 0.3));
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            25% { transform: translateY(-8px) rotate(1deg); }
+            50% { transform: translateY(-12px) rotate(0deg); }
+            75% { transform: translateY(-8px) rotate(-1deg); }
+        }
+
+        .upload-text h3 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .upload-text p {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            margin-bottom: 24px;
+        }
+
+        .upload-btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .upload-btn:hover::before {
+            left: 100%;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(0, 212, 255, 0.4);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .format-tags {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 24px;
+        }
+
+        .format-tag {
+            background: rgba(0, 212, 255, 0.1);
+            color: var(--primary);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            transition: all 0.2s ease;
+        }
+
+        .format-tag:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: translateY(-1px);
+        }
+
+        /* Pricing Section */
+        .pricing-section {
+            background: var(--bg-section);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 32px;
+            backdrop-filter: blur(20px);
+            position: sticky;
+            top: 32px;
+        }
+
+        .pricing-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .pricing-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .pricing-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pricing-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .pricing-card:hover::before,
+        .pricing-card.selected::before {
+            transform: scaleX(1);
+        }
+
+        .pricing-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--primary);
+            box-shadow: 0 12px 40px rgba(0, 212, 255, 0.15);
+        }
+
+        .pricing-card.selected {
+            border-color: var(--primary);
+            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.2);
+        }
+
+        .pricing-card.popular {
+            border-color: var(--accent);
+            position: relative;
+        }
+
+        .pricing-card.popular::after {
+            content: 'MOST POPULAR';
+            position: absolute;
+            top: -1px;
+            right: 16px;
+            background: linear-gradient(135deg, var(--accent), var(--primary));
+            color: white;
+            padding: 6px 16px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            border-radius: 0 0 12px 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .card-header {
+            margin-bottom: 16px;
+        }
+
+        .plan-name {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .plan-price {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+
+        .price-amount {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        .price-period {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .plan-features {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+
+        .plan-features li {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 0;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .plan-features li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .select-plan-btn {
+            width: 100%;
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(0, 212, 255, 0.1) 100%);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .select-plan-btn:hover {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 212, 255, 0.3);
+        }
+
+        .select-plan-btn.selected {
+            background: linear-gradient(135deg, var(--success) 0%, #00cc77 100%);
+            color: white;
+            border-color: var(--success);
+        }
+
+        /* Processing Section */
+        .processing-section {
+            grid-column: 1 / -1;
+            display: none;
+            margin-top: 48px;
+        }
+
+        .processing-section.show {
+            display: block;
+            animation: slideInUp 0.6s ease-out;
+        }
+
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .progress-label {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .progress-percentage {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 32px;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+            width: 0%;
+            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(-45deg, transparent 35%, rgba(255,255,255,0.4) 50%, transparent 65%);
+            animation: progressShine 2s infinite;
+        }
+
+        @keyframes progressShine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .processing-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .step {
+            text-align: center;
+            padding: 24px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .step.active {
+            border-color: var(--primary);
+            background: rgba(0, 212, 255, 0.05);
+            transform: scale(1.02);
+        }
+
+        .step.completed {
+            border-color: var(--success);
+            background: rgba(0, 255, 136, 0.05);
+        }
+
+        .step-icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .step-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .step-description {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Preview Section */
+        .preview-section {
+            grid-column: 1 / -1;
+            display: none;
+            margin-top: 48px;
+        }
+
+        .preview-section.show {
+            display: block;
+            animation: slideInUp 0.6s ease-out;
+        }
+
+        .preview-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .preview-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 12px;
+        }
+
+        .preview-subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            line-height: 1.3;
+        }
+
+        .audio-player-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 32px;
+            text-align: center;
+        }
+
+        .audio-player {
+            width: 100%;
+            max-width: 500px;
+            height: 60px;
+            border-radius: 12px;
+            outline: none;
+        }
+
+        .download-actions {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .download-btn {
+            background: linear-gradient(135deg, var(--success) 0%, #00cc77 100%);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 255, 136, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(0, 255, 136, 0.4);
+        }
+
+        .upgrade-btn {
+            background: linear-gradient(135deg, var(--warning) 0%, #ff8c00 100%);
+            box-shadow: 0 8px 32px rgba(255, 165, 2, 0.3);
+        }
+
+        .upgrade-btn:hover {
+            box-shadow: 0 12px 40px rgba(255, 165, 2, 0.4);
+        }
+
+        /* Status Messages */
+        .status-message {
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            display: none;
+            font-weight: 500;
+            border-left: 4px solid;
+            backdrop-filter: blur(10px);
+        }
+
+        .status-message.show {
+            display: flex;
+            align-items: center;
+            animation: slideInDown 0.4s ease-out;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-icon {
+            margin-right: 12px;
+            font-size: 1.2rem;
+        }
+
+        .status-success {
+            background: rgba(0, 255, 136, 0.1);
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .status-error {
+            background: rgba(255, 71, 87, 0.1);
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .status-info {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .status-warning {
+            background: rgba(255, 165, 2, 0.1);
+            border-color: var(--warning);
+            color: var(--warning);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                gap: 32px;
+            }
+
+            .pricing-section {
+                position: static;
+            }
+
+            .pricing-cards {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 20px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+
+            .header {
+                padding: 40px 0 60px;
+            }
+
+            .content-section {
+                padding: 24px;
+            }
+
+            .upload-zone {
+                padding: 40px 20px;
+            }
+
+            .processing-steps {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .download-actions {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .download-btn {
+                min-width: 200px;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .feature-badges {
+                gap: 12px;
+            }
+
+            .badge {
+                font-size: 0.85rem;
+                padding: 10px 16px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1>🎵 Professional Audio Cleaning</h1>
+                <div class="subtitle">In 100+ Languages</div>
+                <p class="description">The world's most advanced omnilingual profanity removal tool. Perfect for DJs, artists, and content creators who demand pristine audio quality.</p>
+
+                <div class="feature-badges">
+                    <div class="badge">
+                        <span>🌍</span>
+                        <span>100+ Languages Supported</span>
+                    </div>
+                    <div class="badge">
+                        <span>🤖</span>
+                        <span>AI-Powered Precision</span>
+                    </div>
+                    <div class="badge">
+                        <span>⚡</span>
+                        <span>Lightning Fast Processing</span>
+                    </div>
+                    <div class="badge">
+                        <span>🔒</span>
+                        <span>Studio-Grade Security</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <section class="content-section upload-section">
+                <h2 class="section-title">
+                    <span>🎵</span>
+                    <span>Upload Your Audio</span>
+                </h2>
+                <p class="section-description">Upload your track and experience the future of audio cleaning</p>
+
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">🎵</div>
+                    <div class="upload-text">
+                        <h3>Drag & Drop Your Audio File</h3>
+                        <p>or click to browse your device</p>
+                    </div>
+                    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                        Choose Audio File
+                    </button>
+                    <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.aac,.ogg">
+                </div>
+
+                <div class="format-tags">
+                    <span class="format-tag">MP3</span>
+                    <span class="format-tag">WAV</span>
+                    <span class="format-tag">FLAC</span>
+                    <span class="format-tag">M4A</span>
+                    <span class="format-tag">AAC</span>
+                    <span class="format-tag">OGG</span>
+                </div>
+
+                <div class="status-message" id="statusMessage">
+                    <span class="status-icon" id="statusIcon"></span>
+                    <span id="statusText"></span>
+                </div>
+            </section>
+
+            <aside class="pricing-section">
+                <h3 class="pricing-title">Choose Your Plan</h3>
+
+                <div class="pricing-cards">
+                    <div class="pricing-card" data-plan="single_track">
+                        <div class="card-header">
+                            <div class="plan-name">Single Track</div>
+                            <div class="plan-price">
+                                <span class="price-amount">$4.99</span>
+                            </div>
+                        </div>
+                        <ul class="plan-features">
+                            <li>1 audio track cleaning</li>
+                            <li>All 100+ languages</li>
+                            <li>30-second preview</li>
+                            <li>HD audio quality</li>
+                            <li>Instant download</li>
+                        </ul>
+                        <button class="select-plan-btn">Select Plan</button>
+                    </div>
+
+                    <div class="pricing-card popular" data-plan="dj_pro">
+                        <div class="card-header">
+                            <div class="plan-name">DJ Pro</div>
+                            <div class="plan-price">
+                                <span class="price-amount">$29.99</span>
+                                <span class="price-period">/month</span>
+                            </div>
+                        </div>
+                        <ul class="plan-features">
+                            <li>Unlimited track cleaning</li>
+                            <li>All 100+ languages</li>
+                            <li>30-second previews</li>
+                            <li>Priority processing</li>
+                            <li>Batch processing</li>
+                            <li>Professional support</li>
+                        </ul>
+                        <button class="select-plan-btn">Select Plan</button>
+                    </div>
+
+                    <div class="pricing-card" data-plan="studio_elite">
+                        <div class="card-header">
+                            <div class="plan-name">Studio Elite</div>
+                            <div class="plan-price">
+                                <span class="price-amount">$99.99</span>
+                                <span class="price-period">/month</span>
+                            </div>
+                        </div>
+                        <ul class="plan-features">
+                            <li>Everything in DJ Pro</li>
+                            <li>60-second previews</li>
+                            <li>Studio-grade quality</li>
+                            <li>API access</li>
+                            <li>Custom AI training</li>
+                            <li>Dedicated support</li>
+                        </ul>
+                        <button class="select-plan-btn">Select Plan</button>
+                    </div>
+
+                    <div class="pricing-card" data-plan="day_pass">
+                        <div class="card-header">
+                            <div class="plan-name">Day Pass</div>
+                            <div class="plan-price">
+                                <span class="price-amount">$9.99</span>
+                                <span class="price-period">/24h</span>
+                            </div>
+                        </div>
+                        <ul class="plan-features">
+                            <li>Unlimited tracks (24h)</li>
+                            <li>All 100+ languages</li>
+                            <li>30-second previews</li>
+                            <li>Batch processing</li>
+                            <li>HD audio quality</li>
+                        </ul>
+                        <button class="select-plan-btn">Select Plan</button>
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <section class="content-section processing-section" id="processingSection">
+            <h2 class="section-title">
+                <span>⚙️</span>
+                <span>Processing Your Audio</span>
+            </h2>
+
+            <div class="progress-header">
+                <span class="progress-label" id="progressLabel">Initializing AI engine...</span>
+                <span class="progress-percentage" id="progressPercentage">0%</span>
+            </div>
+
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+
+            <div class="processing-steps">
+                <div class="step active" id="stepAnalysis">
+                    <div class="step-icon">🔍</div>
+                    <div class="step-title">Audio Analysis</div>
+                    <div class="step-description">Analyzing structure and quality</div>
+                </div>
+                <div class="step" id="stepLanguage">
+                    <div class="step-icon">🌍</div>
+                    <div class="step-title">Language Detection</div>
+                    <div class="step-description">Identifying spoken languages</div>
+                </div>
+                <div class="step" id="stepFiltering">
+                    <div class="step-icon">🧹</div>
+                    <div class="step-title">Content Filtering</div>
+                    <div class="step-description">Removing inappropriate content</div>
+                </div>
+                <div class="step" id="stepReconstruction">
+                    <div class="step-icon">🎵</div>
+                    <div class="step-title">Audio Reconstruction</div>
+                    <div class="step-description">Rebuilding clean audio</div>
+                </div>
+                <div class="step" id="stepEnhancement">
+                    <div class="step-icon">✨</div>
+                    <div class="step-title">Quality Enhancement</div>
+                    <div class="step-description">Optimizing final output</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="content-section preview-section" id="previewSection">
+            <div class="preview-header">
+                <h2 class="preview-title">🎉 Your Clean Audio is Ready!</h2>
+                <p class="preview-subtitle">Listen to the preview and download your professionally cleaned audio</p>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="wordsRemovedStat">0</div>
+                    <div class="stat-label">inappropriate words removed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="languagesStat">0</div>
+                    <div class="stat-label">languages detected</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">✨</div>
+                    <div class="stat-label">Quality enhanced with AI</div>
+                </div>
+            </div>
+
+            <div class="audio-player-container">
+                <audio controls class="audio-player" id="audioPlayer" preload="metadata">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+
+            <div class="download-actions">
+                <button class="download-btn" id="downloadPreviewBtn">
+                    <span>📥</span>
+                    <span>Download Preview</span>
+                </button>
+                <button class="download-btn" id="downloadFullBtn" style="display: none;">
+                    <span>📥</span>
+                    <span>Download Full Track</span>
+                </button>
+                <button class="download-btn upgrade-btn" id="upgradeBtn">
+                    <span>⭐</span>
+                    <span>Get Full Track</span>
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG = {
+            API_BASE: 'https://omnibackend2.fweago-flavaz.workers.dev',
+            SUPPORTED_FORMATS: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg'],
+            MAX_FILE_SIZE: 200 * 1024 * 1024, // 200MB
+            POLL_INTERVAL: 3000
+        };
+
+        // State
+        let selectedPlan = null;
+        let currentProcessId = null;
+        let currentSessionId = null;
+        let processingInterval = null;
+
+        // DOM Elements
+        const elements = {
+            uploadZone: document.getElementById('uploadZone'),
+            fileInput: document.getElementById('fileInput'),
+            statusMessage: document.getElementById('statusMessage'),
+            statusIcon: document.getElementById('statusIcon'),
+            statusText: document.getElementById('statusText'),
+            processingSection: document.getElementById('processingSection'),
+            previewSection: document.getElementById('previewSection'),
+            progressBar: document.getElementById('progressBar'),
+            progressLabel: document.getElementById('progressLabel'),
+            progressPercentage: document.getElementById('progressPercentage'),
+            audioPlayer: document.getElementById('audioPlayer'),
+            downloadPreviewBtn: document.getElementById('downloadPreviewBtn'),
+            downloadFullBtn: document.getElementById('downloadFullBtn'),
+            upgradeBtn: document.getElementById('upgradeBtn'),
+            wordsRemovedStat: document.getElementById('wordsRemovedStat'),
+            languagesStat: document.getElementById('languagesStat')
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', init);
+
+        function init() {
+            setupUpload();
+            setupPricing();
+            checkUrlParams();
+            testConnection();
+        }
+
+        function setupUpload() {
+            // Click to upload
+            elements.uploadZone.addEventListener('click', () => {
+                elements.fileInput.click();
+            });
+
+            // File selection
+            elements.fileInput.addEventListener('change', handleFileSelect);
+
+            // Drag and drop
+            elements.uploadZone.addEventListener('dragover', handleDragOver);
+            elements.uploadZone.addEventListener('dragleave', handleDragLeave);
+            elements.uploadZone.addEventListener('drop', handleDrop);
+
+            // Prevent default drag behaviors
+            document.addEventListener('dragover', e => e.preventDefault());
+            document.addEventListener('drop', e => e.preventDefault());
+        }
+
+        function setupPricing() {
+            document.querySelectorAll('.pricing-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    // Reset all cards
+                    document.querySelectorAll('.pricing-card').forEach(c => {
+                        c.classList.remove('selected');
+                        c.querySelector('.select-plan-btn').textContent = 'Select Plan';
+                    });
+
+                    // Select clicked card
+                    card.classList.add('selected');
+                    card.querySelector('.select-plan-btn').textContent = 'Selected ✓';
+                    selectedPlan = card.dataset.plan;
+
+                    showStatus('Plan selected! Now upload your audio file.', 'success', '✅');
+                });
+            });
+        }
+
+        function checkUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('success') === 'true') {
+                currentSessionId = params.get('session_id');
+                showStatus('Payment successful! Upload your audio to get started.', 'success', '🎉');
+            }
+            if (params.get('canceled') === 'true') {
+                showStatus('Payment canceled. Select a plan to continue.', 'warning', '⚠️');
+            }
+        }
+
+        async function testConnection() {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE}/health`);
+                if (response.ok) {
+                    console.log('✅ Connected to FWEA-I API');
+                }
+            } catch (error) {
+                console.error('❌ API connection failed:', error);
+                showStatus('Connection issue. Please refresh the page.', 'error', '❌');
+            }
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFileUpload(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                processFileUpload(files[0]);
+            }
+        }
+
+        function processFileUpload(file) {
+            // Validate plan selection
+            if (!selectedPlan) {
+                showStatus('Please select a plan first!', 'error', '❌');
+                document.querySelector('.pricing-section').scrollIntoView({ behavior: 'smooth' });
+                return;
+            }
+
+            // Validate file
+            const validation = validateFile(file);
+            if (!validation.valid) {
+                showStatus(validation.error, 'error', '❌');
+                return;
+            }
+
+            // Process based on session status
+            if (currentSessionId) {
+                uploadFile(file);
+            } else {
+                initiatePayment();
+            }
+        }
+
+        function validateFile(file) {
+            const extension = file.name.split('.').pop().toLowerCase();
+            if (!CONFIG.SUPPORTED_FORMATS.includes(extension)) {
+                return {
+                    valid: false,
+                    error: `Unsupported format: ${extension}. Please use: ${CONFIG.SUPPORTED_FORMATS.join(', ').toUpperCase()}`
+                };
+            }
+
+            if (file.size > CONFIG.MAX_FILE_SIZE) {
+                const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+                return {
+                    valid: false,
+                    error: `File too large: ${sizeMB}MB. Maximum size: 200MB`
+                };
+            }
+
+            return { valid: true };
+        }
+
+        async function initiatePayment() {
+            try {
+                showStatus('Redirecting to secure payment...', 'info', '💳');
+
+                const response = await fetch(`${CONFIG.API_BASE}/create-payment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ planType: selectedPlan })
+                });
+
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error);
+                }
+
+                // Redirect to Stripe Checkout
+                window.location.href = result.checkoutUrl;
+
+            } catch (error) {
+                showStatus(`Payment failed: ${error.message}`, 'error', '❌');
+            }
+        }
+
+        async function uploadFile(file) {
+            try {
+                showProcessing(true);
+                updateProgress(0, 'Uploading file...');
+
+                const formData = new FormData();
+                formData.append('audio', file);
+                formData.append('planType', selectedPlan);
+                formData.append('sessionId', currentSessionId);
+
+                const response = await fetch(`${CONFIG.API_BASE}/process-audio`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error);
+                }
+
+                currentProcessId = result.processId;
+                updateProgress(25, 'Processing started...');
+                startProcessingPolling();
+
+            } catch (error) {
+                showStatus(`Upload failed: ${error.message}`, 'error', '❌');
+                showProcessing(false);
+            }
+        }
+
+        function startProcessingPolling() {
+            let step = 0;
+            const steps = [
+                { progress: 35, text: 'Analyzing audio structure...', stepId: 'stepAnalysis' },
+                { progress: 50, text: 'Detecting languages...', stepId: 'stepLanguage' },
+                { progress: 70, text: 'Filtering inappropriate content...', stepId: 'stepFiltering' },
+                { progress: 85, text: 'Reconstructing clean audio...', stepId: 'stepReconstruction' },
+                { progress: 95, text: 'Enhancing audio quality...', stepId: 'stepEnhancement' }
+            ];
+
+            processingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${CONFIG.API_BASE}/status?processId=${currentProcessId}`);
+                    const status = await response.json();
+
+                    if (status.status === 'completed') {
+                        clearInterval(processingInterval);
+                        updateProgress(100, 'Processing complete!');
+                        completeAllSteps();
+                        setTimeout(() => showPreview(status), 1000);
+                    } else if (status.status === 'failed') {
+                        clearInterval(processingInterval);
+                        throw new Error(status.error || 'Processing failed');
+                    } else if (step < steps.length) {
+                        const currentStep = steps[step];
+                        updateProgress(currentStep.progress, currentStep.text);
+                        setActiveStep(currentStep.stepId);
+                        step++;
+                    }
+
+                } catch (error) {
+                    clearInterval(processingInterval);
+                    showStatus(`Processing failed: ${error.message}`, 'error', '❌');
+                    showProcessing(false);
+                }
+            }, CONFIG.POLL_INTERVAL);
+        }
+
+        function showPreview(status) {
+            showProcessing(false);
+
+            // Update statistics
+            elements.wordsRemovedStat.textContent = status.wordsRemoved || 0;
+            elements.languagesStat.textContent = status.languages?.length || 1;
+
+            // Setup audio preview
+            const previewUrl = `${CONFIG.API_BASE}/download?processId=${currentProcessId}&type=preview`;
+            elements.audioPlayer.src = previewUrl;
+
+            // Setup download handlers
+            elements.downloadPreviewBtn.onclick = () => downloadFile('preview');
+            elements.downloadFullBtn.onclick = () => downloadFile('full');
+            elements.upgradeBtn.onclick = () => {
+                if (['single_track', 'day_pass'].includes(selectedPlan)) {
+                    elements.downloadFullBtn.style.display = 'flex';
+                    elements.upgradeBtn.style.display = 'none';
+                    downloadFile('full');
+                } else {
+                    initiatePayment();
+                }
+            };
+
+            // Show full download for unlimited plans
+            if (['dj_pro', 'studio_elite'].includes(selectedPlan)) {
+                elements.downloadFullBtn.style.display = 'flex';
+                elements.upgradeBtn.style.display = 'none';
+            }
+
+            elements.previewSection.classList.add('show');
+            elements.previewSection.scrollIntoView({ behavior: 'smooth' });
+
+            showStatus('🎉 Processing complete! Your clean audio preview is ready.', 'success', '✅');
+        }
+
+        function downloadFile(type) {
+            const url = `${CONFIG.API_BASE}/download?processId=${currentProcessId}&type=${type}`;
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `fwea-cleaned-${type}.mp3`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            const typeText = type === 'preview' ? 'Preview' : 'Full Track';
+            showStatus(`${typeText} download started!`, 'success', '📥');
+        }
+
+        function showProcessing(show) {
+            elements.processingSection.classList.toggle('show', show);
+            if (show) {
+                elements.processingSection.scrollIntoView({ behavior: 'smooth' });
+                resetSteps();
+            }
+        }
+
+        function updateProgress(percent, text) {
+            elements.progressBar.style.width = `${percent}%`;
+            elements.progressLabel.textContent = text;
+            elements.progressPercentage.textContent = `${Math.round(percent)}%`;
+        }
+
+        function setActiveStep(stepId) {
+            // Reset all steps
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active', 'completed');
+            });
+
+            // Find current step and mark previous as completed
+            const steps = ['stepAnalysis', 'stepLanguage', 'stepFiltering', 'stepReconstruction', 'stepEnhancement'];
+            const currentIndex = steps.indexOf(stepId);
+
+            steps.forEach((id, index) => {
+                const element = document.getElementById(id);
+                if (index < currentIndex) {
+                    element.classList.add('completed');
+                } else if (index === currentIndex) {
+                    element.classList.add('active');
+                }
+            });
+        }
+
+        function completeAllSteps() {
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+                step.classList.add('completed');
+            });
+        }
+
+        function resetSteps() {
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active', 'completed');
+            });
+            document.getElementById('stepAnalysis').classList.add('active');
+        }
+
+        function showStatus(message, type, icon) {
+            elements.statusIcon.textContent = icon;
+            elements.statusText.textContent = message;
+            elements.statusMessage.className = `status-message status-${type} show`;
+
+            // Auto-hide success and info messages
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    elements.statusMessage.classList.remove('show');
+                }, 5000);
+            }
+
+            console.log(`${icon} ${message}`);
+        }
+
+        // Error handling
+        window.addEventListener('error', (e) => {
+            console.error('Application error:', e.error);
+            showStatus('Something went wrong. Please refresh and try again.', 'error', '❌');
+        });
+
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('Unhandled promise rejection:', e.reason);
+            showStatus('Connection error. Please check your internet.', 'error', '❌');
+        });
+    </script>
+</body>
+</html>

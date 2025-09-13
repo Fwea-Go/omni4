@@ -56,52 +56,67 @@ function sendJSON(res, status, obj) {
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization, x-encoder-token, x-fwea-encoder, x-admin-api-token');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization, x-encoder-token, x-fwea-encoder, x-admin-api-token, x-preview-limit-ms');
   res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
   res.setHeader('Cache-Control', 'no-store');
 }
 
-function ffmpegExists() {
-  return new Promise((resolve) => {
-    const p = spawn('ffmpeg', ['-version']);
-    p.on('error', () => resolve(false));
-    p.on('exit', (code) => resolve(code === 0));
-  });
+// Normalize, sort, merge, and clamp profanity segments to an optional time window
+function normalizeSegments(rawSegments, windowStart = 0, windowEnd = null) {
+  if (!Array.isArray(rawSegments) || rawSegments.length === 0) return [];
+  const segs = rawSegments
+    .map(s => ({
+      start: Math.max(0, Number(s.start)),
+      end: Math.max(0, Number(s.end))
+    }))
+    .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
+
+  // Clamp to window if provided
+  const clamped = segs.map(s => {
+    const st = Math.max(s.start, windowStart);
+    const en = windowEnd != null ? Math.min(s.end, windowEnd) : s.end;
+    return { start: st, end: en };
+  }).filter(s => s.end > s.start + 0.005); // at least 5ms
+
+  // Sort and merge overlaps
+  clamped.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const s of clamped) {
+    if (!merged.length) { merged.push(s); continue; }
+    const last = merged[merged.length - 1];
+    if (s.start <= last.end + 0.002) {
+      last.end = Math.max(last.end, s.end);
+    } else {
+      merged.push(s);
+    }
+  }
+  return merged;
 }
 
-function requireAuth(req) {
-  if (!ENCODER_TOKEN) return true; // auth disabled
-  const auth = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-  const xTok1 = (req.headers['x-encoder-token'] || '').trim();
-  const xTok2 = (req.headers['x-fwea-encoder'] || '').trim();
-  const tok = auth || xTok1 || xTok2;
-  return tok && tok === ENCODER_TOKEN;
-}
-
-// Build an FFmpeg audio filter for muting or beeping between time ranges.
+// Build an FFmpeg audio filter for muting or beeping between time ranges (expects normalized segments).
 function buildAudioFilter(segments, mode) {
   if (!segments?.length) return null;
 
-  // Normalize numeric times
-  const ranges = segments
-    .map(({ start, end }) => [Number(start), Number(end)])
-    .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s);
-
-  if (!ranges.length) return null;
+  // Build enable expression
+  const expr = segments.map(({ start, end }) => `between(t,${start.toFixed(3)},${end.toFixed(3)})`).join('+');
 
   if (mode === 'beep') {
-    const expr = ranges.map(([s, e]) => `between(t,${s},${e})`).join('+');
+    // Generate a sine beep and gate it to the windows, then mix with original
     const graph =
-      `[0:a]anull[a0];` +
-      `sine=f=1000:b=4:d=36000:sample_rate=48000,volume=0.5,` +
-      `volume=enable='${expr}':volume=0.8[beepgated];` +
-      `[a0][beepgated]amix=inputs=2:normalize=0[out]`;
+      `[0:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo,` +
+      `alimiter=limit=0.95,` +
+      `anull[a0];` +
+      `sine=f=1000:sample_rate=48000,volume=0.0,volume=enable='${expr}':volume=0.8,` +
+      `afade=t=in:st=0:d=0.005,afade=t=out:st=0:d=0.005[beep];` +
+      `[a0][beep]amix=inputs=2:normalize=0[out]`;
     return { graph, map: '[out]' };
   }
 
-  // Default mode: MUTE inside windows
-  const expr = ranges.map(([s, e]) => `between(t,${s},${e})`).join('+');
-  const graph = `volume=enable='${expr}':volume=0`;
+  // Default: mute inside windows; apply tiny fades on edges to avoid pops
+  const graph =
+    `aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo,` +
+    `volume=enable='${expr}':volume=0,` +
+    `afade=t=in:st=0:d=0.003,afade=t=out:st=0:d=0.003`;
   return { graph, map: null };
 }
 
@@ -121,6 +136,7 @@ async function handleEncode(req, res) {
       bitrate = '192k',    // used for mp3/aac
       mode = 'mute',       // 'mute' | 'beep'
       segments = [],       // [{start, end}, ...]
+      window,              // optional { start: number, end: number } to trim output (e.g., 0..30s preview)
       returnInline = false // if true, Content-Type audio/* (no attachment)
     } = body || {};
 
@@ -146,9 +162,25 @@ async function handleEncode(req, res) {
       : Buffer.from(fileBase64, 'base64');
     await writeFile(inPath, inputBuf);
 
-    const filter = buildAudioFilter(segments, mode);
-    const args = ['-y', '-i', inPath];
+    // Determine output window (preview) if provided
+    const wStart = Math.max(0, Number(window?.start ?? 0));
+    const wEnd = Number.isFinite(Number(window?.end)) ? Math.max(0, Number(window.end)) : null;
 
+    // Normalize and clamp segments to the window
+    const normSegs = normalizeSegments(segments, wStart, wEnd);
+
+    const filter = buildAudioFilter(normSegs, mode);
+    const args = ['-y', '-i', inPath];
+    // Accurate trim after decoding (keeps filter times aligned)
+    if (wEnd != null) {
+      const dur = Math.max(0.01, wEnd - wStart);
+      args.push('-ss', String(wStart), '-t', String(dur));
+    } else if (wStart > 0) {
+      args.push('-ss', String(wStart));
+    }
+
+    // Normalize output format and quality
+    args.push('-ar', '48000', '-ac', '2');
     if (filter) {
       if (filter.map) {
         args.push('-filter_complex', filter.graph, '-map', filter.map);
@@ -160,9 +192,12 @@ async function handleEncode(req, res) {
     if (format === 'mp3') {
       args.push('-c:a', 'libmp3lame', '-b:a', bitrate);
     } else if (format === 'aac' || format === 'm4a') {
-      args.push('-c:a', 'aac', '-b:a', bitrate);
+      args.push('-c:a', 'aac', '-b:a', bitrate, '-movflags', '+faststart');
     } else if (format === 'wav') {
       args.push('-c:a', 'pcm_s16le');
+    } else {
+      // default sensible fallback
+      args.push('-c:a', 'libmp3lame', '-b:a', bitrate);
     }
 
     args.push(outPath);
@@ -180,9 +215,10 @@ async function handleEncode(req, res) {
     rm(work, { recursive: true, force: true }).catch(() => {});
 
     const filename = `cleaned_${randomUUID()}.${format}`;
-    const type = format === 'wav' ? 'audio/wav'
-               : format === 'mp3' ? 'audio/mpeg'
-               : 'application/octet-stream';
+    const type = (format === 'wav') ? 'audio/wav'
+              : (format === 'mp3') ? 'audio/mpeg'
+              : (format === 'aac' || format === 'm4a') ? 'audio/aac'
+              : 'application/octet-stream';
 
     res.writeHead(200, {
       'Content-Type': returnInline ? type : 'application/octet-stream',
@@ -211,7 +247,10 @@ async function handleJobClean(req, res) {
     const inputUrl = body.input?.url || body.inputUrl;
     const outputKey = body.output?.key || body.outputKey;
     const format = (body.format || 'wav').toLowerCase();
-    const segments = Array.isArray(body.profanityTimestamps) ? body.profanityTimestamps : (body.segments || []);
+    const wStart = Math.max(0, Number(body.window?.start ?? 0));
+    const wEnd = Number.isFinite(Number(body.window?.end)) ? Math.max(0, Number(body.window.end)) : null;
+    const rawSegments = Array.isArray(body.profanityTimestamps) ? body.profanityTimestamps : (body.segments || []);
+    const segments = normalizeSegments(rawSegments, wStart, wEnd);
     const callback = body.callback || body.callbackUrl;
     const processId = body.processId || body.jobId || null;
 
@@ -229,6 +268,14 @@ async function handleJobClean(req, res) {
 
     const filter = buildAudioFilter(segments, body.mode || 'mute');
     const args = ['-y', '-i', inPath];
+    if (wEnd != null) {
+      const dur = Math.max(0.01, wEnd - wStart);
+      args.push('-ss', String(wStart), '-t', String(dur));
+    } else if (wStart > 0) {
+      args.push('-ss', String(wStart));
+    }
+    // Normalize output format and quality
+    args.push('-ar', '48000', '-ac', '2');
     if (filter) {
       if (filter.map) {
         args.push('-filter_complex', filter.graph, '-map', filter.map);
@@ -240,9 +287,12 @@ async function handleJobClean(req, res) {
     if (format === 'mp3') {
       args.push('-c:a', 'libmp3lame', '-b:a', '192k');
     } else if (format === 'aac' || format === 'm4a') {
-      args.push('-c:a', 'aac', '-b:a', '192k');
+      args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
     } else if (format === 'wav') {
       args.push('-c:a', 'pcm_s16le');
+    } else {
+      // default sensible fallback
+      args.push('-c:a', 'libmp3lame', '-b:a', '192k');
     }
 
     args.push(outPath);
@@ -306,3 +356,20 @@ const server = http.createServer(async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => console.log(`Encoder listening on 0.0.0.0:${PORT}`));
+
+function ffmpegExists() {
+  return new Promise((resolve) => {
+    const p = spawn('ffmpeg', ['-version']);
+    p.on('error', () => resolve(false));
+    p.on('exit', (code) => resolve(code === 0));
+  });
+}
+
+function requireAuth(req) {
+  if (!ENCODER_TOKEN) return true; // auth disabled
+  const auth = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+  const xTok1 = (req.headers['x-encoder-token'] || '').trim();
+  const xTok2 = (req.headers['x-fwea-encoder'] || '').trim();
+  const tok = auth || xTok1 || xTok2;
+  return tok && tok === ENCODER_TOKEN;
+}

@@ -44,6 +44,7 @@ async function stripeFetch(path, method, bodyObj, env) {
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Stripe-Version': env.STRIPE_API_VERSION || '2024-06-20',
     },
     body: stripeParams(bodyObj),
   });
@@ -59,13 +60,16 @@ async function stripeFetch(path, method, bodyObj, env) {
 async function createCheckoutSession({ priceId, isSubscription, email, successUrl, cancelUrl, metadata }, env) {
   const mode = isSubscription ? 'subscription' : 'payment';
   const body = {
-    mode,
-    'line_items': [{ price: priceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: email || undefined,
-  };
-  if (metadata) body.metadata = metadata;
+  mode,
+  line_items: [{ price: priceId, quantity: 1 }],
+  success_url: successUrl,
+  cancel_url: cancelUrl,
+  customer_email: email || undefined,
+  billing_address_collection: 'auto',
+  allow_promotion_codes: true,
+  client_reference_id: metadata?.fingerprint || undefined,
+};
+if (metadata) body.metadata = metadata;
   return stripeFetch('/v1/checkout/sessions', 'POST', body, env);
 }
 
@@ -1202,18 +1206,29 @@ function getBitrateForPlan(plan) {
 }
 
 function normalizePlanType(raw) {
-  const v = String(raw || '').toLowerCase().replace(/\s+/g, '_');
+  const v = String(raw || '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/[^\w_]/g, '');
   const map = {
+    // single track
     single: 'single_track',
-    single_track: 'single_track',
+    singletrack: 'single_track',
+    one_track: 'single_track',
     track: 'single_track',
+    single_track: 'single_track',
+    // day pass
     daypass: 'day_pass',
     day_pass: 'day_pass',
     pass: 'day_pass',
+    // dj pro
     dj: 'dj_pro',
+    djpro: 'dj_pro',
     dj_pro: 'dj_pro',
     pro: 'dj_pro',
+    // studio elite
     studio: 'studio_elite',
+    studioelite: 'studio_elite',
     elite: 'studio_elite',
     studio_elite: 'studio_elite',
   };
@@ -1396,9 +1411,26 @@ async function handlePaymentCreation(request, env, corsHeaders) {
   }
 
   try {
-    const { priceId, type, fileName, email, fingerprint } = await request.json();
-    const frontendBase = getFrontendBase(env, request);
-    const normalizedType = normalizePlanType(type);
+  let body = {};
+  // Prefer JSON
+  try { body = await request.clone().json(); } catch {
+    // Fallback: urlencoded or multipart
+    try {
+      const ct = request.headers.get('Content-Type') || '';
+      if (ct.includes('application/x-www-form-urlencoded')) {
+        const txt = await request.text();
+        body = Object.fromEntries(new URLSearchParams(txt));
+      } else if (ct.includes('multipart/form-data')) {
+        const fd = await request.formData();
+        body = Object.fromEntries([...fd.entries()]);
+      }
+    } catch {}
+  }
+
+  const rawType = body.type || body.plan || body.planType;
+  const { priceId: rawPriceId, fileName, email, fingerprint } = body;
+  const frontendBase = getFrontendBase(env, request);
+  const normalizedType = normalizePlanType(rawType);
     // Admin bypass: if admin token present, skip Stripe and grant access
     if (isAdminRequest(request, env)) {
       const successUrl = `${frontendBase.replace(/\/+$/, '')}/success?session_id=ADMIN_BYPASS&admin=1`;
@@ -1420,20 +1452,35 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     }
 
     PRICE_BY_TYPE = buildPriceMapFromEnv(env);
-
     const priceByType = PRICE_BY_TYPE;
-    const expectedPrice = priceByType[normalizedType];
-    if (!expectedPrice) {
-      return new Response(JSON.stringify({ error: `Price not configured for plan '${normalizedType}'` }), {
+    const expectedPrice = normalizedType ? priceByType[normalizedType] : undefined;
+
+    // Choose the final price id:
+    // 1) Prefer the client-sent priceId if given.
+    // 2) Else use the mapped price for the normalized type.
+    // 3) If neither exists, error with the current map so the UI can self-heal.
+    let finalPriceId = rawPriceId || expectedPrice;
+
+    if (!finalPriceId) {
+      return new Response(JSON.stringify({
+        error: `Price not configured`,
+        plan: normalizedType,
+        map: priceByType
+      }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
-    if (priceId && priceId !== expectedPrice) {
-      return new Response(JSON.stringify({ error: 'Price/type mismatch', expectedPrice }), {
+
+    // If both were supplied, ensure they agree to avoid wrong-plan charges.
+    if (rawPriceId && expectedPrice && rawPriceId !== expectedPrice) {
+      return new Response(JSON.stringify({
+        error: 'Price/type mismatch',
+        expectedPrice,
+        got: rawPriceId
+      }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
-    const finalPriceId = priceId || expectedPrice;
 
     const isSubscription = (normalizedType === 'dj_pro' || normalizedType === 'studio_elite');
 
@@ -1452,7 +1499,7 @@ async function handlePaymentCreation(request, env, corsHeaders) {
       }
     }, env);
 
-    try { await storePaymentIntent(session.id, type, finalPriceId, fingerprint, env); } catch {}
+    try { await storePaymentIntent(session.id, normalizedType, finalPriceId, fingerprint, env); } catch {}
 
     return new Response(JSON.stringify({ success: true, sessionId: session.id, url: session.url }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -1461,7 +1508,12 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     console.error('Payment creation error:', error?.message);
     const isAdmin = isAdminRequest(request, env);
     const payload = isAdmin
-      ? { error: 'Payment creation failed', details: error?.message || 'unknown', priceMap: buildPriceMapFromEnv(env) }
+      ? {
+          error: 'Payment creation failed',
+          details: error?.message || 'unknown',
+          priceMap: buildPriceMapFromEnv(env),
+          tried: { type: (body?.type || body?.plan || ''), priceId: (body?.priceId || '') }
+        }
       : { error: 'Payment creation failed' };
     return new Response(JSON.stringify(payload), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }

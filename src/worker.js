@@ -9,11 +9,12 @@ const STRIPE_PRICE_IDS = {
 // derive at runtime using env (set in handlePaymentCreation)
 let PRICE_BY_TYPE = {};
 function buildPriceMapFromEnv(env){
+  const prefer = (a, b, c) => a || b || c || undefined;
   return {
-    single_track: env.STRIPE_PRICE_SINGLE || env.STRIPE_SINGLE_PRICE_ID || STRIPE_PRICE_IDS.single_track,
-    day_pass: env.STRIPE_PRICE_DAYPASS || env.STRIPE_DAY_PASS_PRICE_ID || STRIPE_PRICE_IDS.day_pass,
-    dj_pro: env.STRIPE_PRICE_DJPRO || env.STRIPE_DJ_PRO_PRICE_ID || STRIPE_PRICE_IDS.dj_pro,
-    studio_elite: env.STRIPE_PRICE_STUDIO || env.STRIPE_STUDIO_ELITE_PRICE_ID || STRIPE_PRICE_IDS.studio_elite,
+    single_track: prefer(env.STRIPE_PRICE_SINGLE,  env.STRIPE_SINGLE_PRICE_ID,        STRIPE_PRICE_IDS.single_track),
+    day_pass:     prefer(env.STRIPE_PRICE_DAYPASS, env.STRIPE_DAY_PASS_PRICE_ID,      STRIPE_PRICE_IDS.day_pass),
+    dj_pro:       prefer(env.STRIPE_PRICE_DJPRO,   env.STRIPE_DJ_PRO_PRICE_ID,        STRIPE_PRICE_IDS.dj_pro),
+    studio_elite: prefer(env.STRIPE_PRICE_STUDIO,  env.STRIPE_STUDIO_ELITE_PRICE_ID,  STRIPE_PRICE_IDS.studio_elite),
   };
 }
 
@@ -334,6 +335,7 @@ function getCorsHeaders(request, env) {
         'Timing-Allow-Origin': '*',
         // 'Permissions-Policy': 'payment=(self "https://checkout.stripe.com")', // Removed as per instructions
         'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Content-Security-Policy': "frame-ancestors 'self' https://checkout.stripe.com",
     };
 
     return allowOrigin === workerOrigin ? baseCors : { ...baseCors, 'Access-Control-Allow-Credentials': 'true' };
@@ -498,6 +500,7 @@ async function handleAudioProcessing(request, env, corsHeaders) {
         const fingerprint = formData.get('fingerprint') || 'anonymous';
         const processId = generateProcessId();
         await updateProgress(env, fingerprint, processId, 'start', 2, {state: 'uploading'});
+        await updateProgress(env, fingerprint, processId, 'upload-received', 25, { state: 'received' });
         const planType = formData.get('planType') || 'free';
         const admin = isAdminRequest(request, env);
         const effectivePlan = admin ? 'studio_elite' : planType;
@@ -859,6 +862,7 @@ async function generateAudioOutputsEnhanced(audioBuffer, profanityTimestamps, pl
   });
   const { exp: pExp, sig: pSig } = await signR2Key(previewKey, env, 30 * 60);
   const previewUrl = pSig ? `${base}/audio/${encodeURIComponent(previewKey)}?exp=${pExp}&sig=${pSig}` : `${base}/audio/${encodeURIComponent(previewKey)}`;
+  try { await updateProgress(env, fingerprint, processId, 'preview-ready', 60, { state: 'preview', previewKey }); } catch {}
 
   // 3) Full output path (encoder will write here)
   const fullKey = `full/${processId}_full.wav`;
@@ -1140,6 +1144,33 @@ function getWorkerBase(env, request) {
     }
 }
 
+function getFrontendBase(env, request) {
+  // 1) explicit config
+  const configured = (env.FRONTEND_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+
+  // 2) Origin header (Wix/Pages)
+  const origin = request.headers.get('Origin') || '';
+  if (origin) return origin.replace(/\/+$/, '');
+
+  // 3) Referer → domain
+  const ref = request.headers.get('Referer') || '';
+  try {
+    if (ref) {
+      const u = new URL(ref);
+      return `${u.protocol}//${u.host}`;
+    }
+  } catch {}
+
+  // 4) last resort: worker’s own origin
+  try {
+    const u = new URL(request.url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '';
+  }
+}
+
 function generateProcessId() {
     return 'fwea_' + Date.now() + '_' + Math.random().toString(36).substring(7);
 }
@@ -1289,7 +1320,7 @@ async function handlePrices(request, env, corsHeaders) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
+    return new Response(JSON.stringify({ success: false, error: e.message || String(e) }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
@@ -1366,10 +1397,11 @@ async function handlePaymentCreation(request, env, corsHeaders) {
 
   try {
     const { priceId, type, fileName, email, fingerprint } = await request.json();
+    const frontendBase = getFrontendBase(env, request);
     const normalizedType = normalizePlanType(type);
     // Admin bypass: if admin token present, skip Stripe and grant access
     if (isAdminRequest(request, env)) {
-      const successUrl = `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id=ADMIN_BYPASS&admin=1`;
+      const successUrl = `${frontendBase.replace(/\/+$/, '')}/success?session_id=ADMIN_BYPASS&admin=1`;
       return new Response(JSON.stringify({ success: true, sessionId: 'ADMIN_BYPASS', url: successUrl }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -1377,12 +1409,12 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     }
 
     if (!env.STRIPE_SECRET_KEY) {
-      return new Response(JSON.stringify({ error: 'Missing STRIPE_SECRET_KEY' }), {
+      return new Response(JSON.stringify({ error: 'Missing STRIPE_SECRET_KEY (set in Worker variables)' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
-    if (!env.FRONTEND_URL) {
-      return new Response(JSON.stringify({ error: 'Missing FRONTEND_URL' }), {
+    if (!frontendBase) {
+      return new Response(JSON.stringify({ error: 'Unable to resolve FRONTEND_URL from config/origin' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
@@ -1409,8 +1441,8 @@ async function handlePaymentCreation(request, env, corsHeaders) {
       priceId: finalPriceId,
       isSubscription,
       email,
-      successUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${(env.FRONTEND_URL || '').replace(/\/+$/, '')}/cancel`,
+      successUrl: `${frontendBase.replace(/\/+$/, '')}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl:  `${frontendBase.replace(/\/+$/, '')}/cancel`,
       metadata: {
         type: normalizedType || '',
         fileName: fileName || '',
@@ -1427,7 +1459,11 @@ async function handlePaymentCreation(request, env, corsHeaders) {
     });
   } catch (error) {
     console.error('Payment creation error:', error?.message);
-    return new Response(JSON.stringify({ error: 'Payment creation failed', details: error?.message || 'unknown' }), {
+    const isAdmin = isAdminRequest(request, env);
+    const payload = isAdmin
+      ? { error: 'Payment creation failed', details: error?.message || 'unknown', priceMap: buildPriceMapFromEnv(env) }
+      : { error: 'Payment creation failed' };
+    return new Response(JSON.stringify(payload), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
